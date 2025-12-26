@@ -24,14 +24,24 @@ Cards.RANKS = {
 
 --------------------------------------------------------------------------------
 -- B.3: Card constructor
--- Creates a card table with suit and rank
+-- Creates a card table with suit and rank and unique ID
 --------------------------------------------------------------------------------
 
+-- Track card creation for unique IDs
+local cardCounter = 0
+
 function Cards.newCard(suit, rank)
+    cardCounter = cardCounter + 1
     return {
+        id = cardCounter,
         suit = suit,
         rank = rank
     }
+end
+
+-- Reset card counter (for testing/new games)
+function Cards.resetCardCounter()
+    cardCounter = 0
 end
 
 --------------------------------------------------------------------------------

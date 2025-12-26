@@ -66,6 +66,14 @@ function gameLoad()
     game.state = State.dealRoomUpToFull(game.state)
     game.state.runState = State.RunState.AWAITING
     
+    -- Validate no duplicates at start
+    local valid, err = State.assertNoDuplicateCards(game.state)
+    if not valid then
+        print("=== DUPLICATE CARD BUG AT START ===")
+        print(err)
+        print("====================================")
+    end
+    
     -- UI message
     game.message = "Scoundrel - Press R to reset, D to toggle debug"
 end
@@ -111,6 +119,16 @@ function gameKeypressed(key)
     elseif key == "p" and game.debug then
         -- Print state dump to console
         printStateDump()
+    elseif key == "t" and game.debug then
+        -- Run automated duplicate test
+        local allPassed = true
+        for i = 1, 10 do
+            local passed = runAutomatedDuplicateTest(os.time() + i * 12345)
+            allPassed = allPassed and passed
+        end
+        print(allPassed and "=== ALL TESTS PASSED ===" or "=== SOME TESTS FAILED ===")
+        -- Reset to current game
+        resetGame()
     elseif key == "space" and game.debug then
         -- Auto-play: take first available card (for stress testing)
         autoPlayStep()
@@ -135,8 +153,8 @@ function gameMousepressed(x, y, button)
     local index = Render.indexFromMouseClick(x, y)
     if not index then return end
     
-    -- Check if there's a card at this index
-    if index > #game.state.room.cards then return end
+    -- Check if there's a card at this index (room uses sparse array, can't use #)
+    if not game.state.room.cards[index] then return end
     
     -- Left click = take, right click = flee
     if button == 1 then
@@ -184,8 +202,8 @@ function printStateDump()
     for i = 1, State.ROOM_SIZE do
         local card = s.room.cards[i]
         if card then
-            print(string.format("  [%d] %s (%s, value %d)", 
-                i, Cards.cardToString(card), Cards.cardType(card), Cards.cardValue(card)))
+            print(string.format("  [%d] %s (id=%d, %s, value %d)", 
+                i, Cards.cardToString(card), card.id or 0, Cards.cardType(card), Cards.cardValue(card)))
         else
             print(string.format("  [%d] (empty)", i))
         end
@@ -195,6 +213,22 @@ function printStateDump()
     print(string.format("Monster Memory: ♠=%s ♣=%s", 
         tostring(s.turnFlags.lastWeaponHitBySuit.spades),
         tostring(s.turnFlags.lastWeaponHitBySuit.clubs)))
+    
+    -- Run duplicate assertion
+    local valid, err = State.assertNoDuplicateCards(s)
+    if valid then
+        print("Card integrity: OK (no duplicates)")
+    else
+        print("Card integrity: FAILED - " .. err)
+    end
+    
+    -- Total card count (should always equal 44)
+    local totalCards = #s.deck + #s.discard + State.roomCardCount(s)
+    if s.weapon and s.weapon.card then
+        totalCards = totalCards + 1
+    end
+    print(string.format("Total cards accounted for: %d/44", totalCards))
+    
     print("================================")
 end
 
@@ -211,16 +245,74 @@ function autoPlayStep()
         return
     end
     
-    -- Check if room has cards
-    if #s.room.cards == 0 then
+    -- Check if room has cards (use roomCardCount for sparse array)
+    if State.roomCardCount(s) == 0 then
         print("Auto-play: Room empty")
         return
     end
     
-    -- Simple strategy: take first card
-    -- Could be smarter (prioritize potions when low HP, etc.)
-    local index = 1
-    game.state = Actions.applyTake(game.state, index)
-    print(string.format("Auto-play: Took card %d", index))
+    -- Simple strategy: take first available card (handle sparse array)
+    for i = 1, State.ROOM_SIZE do
+        if s.room.cards[i] then
+            game.state = Actions.applyTake(game.state, i)
+            print(string.format("Auto-play: Took card %d", i))
+            return
+        end
+    end
+end
+
+-- Run a full automated game and check for duplicates
+function runAutomatedDuplicateTest(seed)
+    print("=== AUTOMATED DUPLICATE TEST (seed=" .. seed .. ") ===")
+    
+    Cards.resetCardCounter()
+    local testState = State.createNewGameState(seed)
+    testState = State.dealRoomUpToFull(testState)
+    testState.runState = State.RunState.AWAITING
+    
+    local moves = 0
+    local maxMoves = 200
+    local duplicateFound = false
+    
+    while moves < maxMoves do
+        -- Validate state
+        local valid, err = State.assertNoDuplicateCards(testState)
+        if not valid then
+            print("DUPLICATE FOUND at move " .. moves .. ": " .. err)
+            duplicateFound = true
+            break
+        end
+        
+        -- Check for game end
+        if testState.runState == State.RunState.GAME_OVER or 
+           testState.runState == State.RunState.VICTORY then
+            break
+        end
+        
+        -- Take first available card
+        local taken = false
+        for i = 1, State.ROOM_SIZE do
+            if testState.room.cards[i] then
+                -- Randomly flee or take
+                if not testState.room.fleeUsed and math.random() < 0.1 then
+                    testState = Actions.applyFlee(testState, i)
+                else
+                    testState = Actions.applyTake(testState, i)
+                end
+                taken = true
+                break
+            end
+        end
+        
+        if not taken then break end
+        moves = moves + 1
+    end
+    
+    if not duplicateFound then
+        print("PASSED: " .. moves .. " moves, ended with " .. testState.runState)
+    end
+    print("==============================================")
+    
+    return not duplicateFound
 end
 

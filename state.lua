@@ -39,6 +39,10 @@ function State.createNewGameState(seed)
     -- Seed the RNG
     math.randomseed(seed)
     
+    -- Reset card counter for clean unique IDs
+    local Cards = require("cards")
+    Cards.resetCardCounter()
+    
     -- Create and shuffle the Scoundrel deck
     local deck = Deck.createScoundrelDeck()
     Deck.shuffle(deck)
@@ -424,16 +428,31 @@ end
 
 function State.assertNoDuplicateCards(state)
     local Cards = require("cards")
-    local seen = {}
+    local seenByString = {}  -- Check by suit+rank
+    local seenById = {}      -- Check by unique ID
     
     -- Helper to check and record a card
     local function checkCard(card, location)
-        local id = Cards.cardToString(card)
-        if seen[id] then
-            return false, string.format("Duplicate card %s found in %s and %s", 
-                id, seen[id], location)
+        local cardStr = Cards.cardToString(card)
+        local cardId = card.id
+        
+        -- Check for duplicate suit+rank (the actual game rule)
+        if seenByString[cardStr] then
+            return false, string.format("Duplicate card %s (id=%s) found in %s and %s (id=%s)", 
+                cardStr, tostring(cardId), location, seenByString[cardStr].location, 
+                tostring(seenByString[cardStr].id))
         end
-        seen[id] = location
+        seenByString[cardStr] = { location = location, id = cardId }
+        
+        -- Check for same card object appearing twice (reference leak)
+        if cardId and seenById[cardId] then
+            return false, string.format("Same card instance id=%d (%s) found in %s and %s", 
+                cardId, cardStr, seenById[cardId], location)
+        end
+        if cardId then
+            seenById[cardId] = location
+        end
+        
         return true, nil
     end
     

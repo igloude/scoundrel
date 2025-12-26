@@ -6,6 +6,22 @@ local State = require("state")
 
 local Actions = {}
 
+-- Debug flag to enable duplicate card assertions
+Actions.DEBUG_ASSERTIONS = true
+
+-- Helper to run assertions (call after state changes)
+local function runAssertions(state, context)
+    if not Actions.DEBUG_ASSERTIONS then return end
+    
+    local valid, err = State.assertNoDuplicateCards(state)
+    if not valid then
+        print("=== DUPLICATE CARD BUG DETECTED ===")
+        print("Context: " .. (context or "unknown"))
+        print("Error: " .. err)
+        print("===================================")
+    end
+end
+
 --------------------------------------------------------------------------------
 -- G.5: applyDamage(state, amount)
 -- Reduces HP by amount, clamping at 0. Sets GAME_OVER if HP <= 0.
@@ -300,6 +316,9 @@ function Actions.applyTake(state, index, useWeapon)
     -- Post-take processing
     newState = Actions.afterSuccessfulTake(newState)
     
+    -- Run assertions to catch any duplicate card bugs
+    runAssertions(newState, "after applyTake index=" .. index)
+    
     return newState
 end
 
@@ -404,6 +423,9 @@ function Actions.applyFlee(state, index)
     
     -- Post-flee processing (discard remaining cards, deal new room)
     newState = Actions.afterFlee(newState)
+    
+    -- Run assertions to catch any duplicate card bugs
+    runAssertions(newState, "after applyFlee index=" .. index)
     
     return newState
 end
