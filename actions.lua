@@ -204,7 +204,8 @@ end
 --------------------------------------------------------------------------------
 -- G.10: afterSuccessfulTake(state)
 -- Called after successfully taking a card.
--- Checks win/lose conditions and refills room if needed.
+-- Room transition rule: After taking 3 cards (1 left), the remaining card
+-- carries forward to the next room with 3 new cards drawn.
 -- Returns newState
 --------------------------------------------------------------------------------
 
@@ -217,19 +218,39 @@ function Actions.afterSuccessfulTake(state)
         return newState
     end
     
-    -- Check if room is empty
-    if State.roomIsEmpty(newState) then
-        -- Check if deck is also empty -> victory
-        if State.deckIsEmpty(newState) then
-            newState.runState = State.RunState.VICTORY
-            newState = State.setLog(newState, "Victory! You survived the dungeon!")
-            return newState
+    local roomCount = State.roomCardCount(newState)
+    
+    -- Room transition: 1 card left and deck has cards
+    if roomCount == 1 and not State.deckIsEmpty(newState) then
+        -- Find the remaining card and move it to position 1
+        local carryOverCard = nil
+        for i = 1, State.ROOM_SIZE do
+            if newState.room.cards[i] then
+                carryOverCard = newState.room.cards[i]
+                break
+            end
         end
         
-        -- Deal new room
+        -- Reset room with carry-over card at position 1
+        newState = State.shallowCopyState(newState)
+        newState.room.cards = { carryOverCard, nil, nil, nil }
         newState.room.fleeUsed = false
+        
+        -- Draw 3 new cards to fill positions 2, 3, 4
         newState = State.dealRoomUpToFull(newState)
+        
+        return newState
     end
+    
+    -- Victory: room empty AND deck empty
+    if roomCount == 0 and State.deckIsEmpty(newState) then
+        newState.runState = State.RunState.VICTORY
+        newState = State.setLog(newState, "Victory! You survived the dungeon!")
+        return newState
+    end
+    
+    -- Edge case: 1 card left but deck is empty - player must take it to win
+    -- (No transition needed, player continues taking from room)
     
     return newState
 end
@@ -320,11 +341,14 @@ end
 function Actions.afterFlee(state)
     local newState = State.shallowCopyState(state)
     
-    -- Discard all remaining room cards
-    for _, card in ipairs(newState.room.cards) do
-        table.insert(newState.discard, card)
+    -- Discard all remaining room cards (handles sparse array)
+    for i = 1, State.ROOM_SIZE do
+        local card = newState.room.cards[i]
+        if card then
+            table.insert(newState.discard, card)
+            newState.room.cards[i] = nil
+        end
     end
-    newState.room.cards = {}
     
     -- Mark flee as used (already done in applyFlee, but ensure it)
     newState.room.fleeUsed = true

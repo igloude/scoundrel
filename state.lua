@@ -92,12 +92,27 @@ function State.createNewGameState(seed)
 end
 
 --------------------------------------------------------------------------------
--- E.1: roomIsFull(state)
--- Returns true if room has ROOM_SIZE cards
+-- E.1: roomCardCount(state)
+-- Returns the number of cards currently in the room (non-nil slots)
+--------------------------------------------------------------------------------
+
+function State.roomCardCount(state)
+    local count = 0
+    for i = 1, State.ROOM_SIZE do
+        if state.room.cards[i] then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+--------------------------------------------------------------------------------
+-- E.1b: roomIsFull(state)
+-- Returns true if room has ROOM_SIZE cards (all slots filled)
 --------------------------------------------------------------------------------
 
 function State.roomIsFull(state)
-    return #state.room.cards >= State.ROOM_SIZE
+    return State.roomCardCount(state) >= State.ROOM_SIZE
 end
 
 --------------------------------------------------------------------------------
@@ -111,16 +126,16 @@ end
 
 --------------------------------------------------------------------------------
 -- E.3: roomIsEmpty(state)
--- Returns true if room has no cards
+-- Returns true if room has no cards (all slots empty)
 --------------------------------------------------------------------------------
 
 function State.roomIsEmpty(state)
-    return #state.room.cards == 0
+    return State.roomCardCount(state) == 0
 end
 
 --------------------------------------------------------------------------------
 -- E.4: dealOneToRoom(state)
--- Draws one card from deck into room (if possible)
+-- Draws one card from deck into the first empty slot (1-4)
 -- Returns newState (pure function - does not mutate input)
 --------------------------------------------------------------------------------
 
@@ -132,9 +147,20 @@ function State.dealOneToRoom(state)
     -- Copy state
     local newState = State.shallowCopyState(state)
     
-    -- Draw card from deck and add to room
+    -- Find first empty slot
+    local slot = nil
+    for i = 1, State.ROOM_SIZE do
+        if not newState.room.cards[i] then
+            slot = i
+            break
+        end
+    end
+    
+    if not slot then return state end  -- No empty slot (shouldn't happen)
+    
+    -- Draw card from deck and place in slot
     local card = table.remove(newState.deck)
-    table.insert(newState.room.cards, card)
+    newState.room.cards[slot] = card
     
     return newState
 end
@@ -155,20 +181,26 @@ end
 
 --------------------------------------------------------------------------------
 -- E.6: removeRoomCard(state, index)
--- Removes card at index from room
+-- Sets slot to nil (card stays in its position, doesn't shift)
 -- Returns (newState, removedCard) or (state, nil) if invalid index
 --------------------------------------------------------------------------------
 
 function State.removeRoomCard(state, index)
-    if index < 1 or index > #state.room.cards then
+    if index < 1 or index > State.ROOM_SIZE then
+        return state, nil
+    end
+    
+    -- Check if there's a card at this index
+    if not state.room.cards[index] then
         return state, nil
     end
     
     -- Copy state
     local newState = State.shallowCopyState(state)
     
-    -- Remove card
-    local removedCard = table.remove(newState.room.cards, index)
+    -- Get the card and set slot to nil
+    local removedCard = newState.room.cards[index]
+    newState.room.cards[index] = nil
     
     return newState, removedCard
 end
@@ -227,7 +259,8 @@ end
 --------------------------------------------------------------------------------
 
 function State.isValidRoomIndex(state, index)
-    return index >= 1 and index <= #state.room.cards
+    -- Check if index is in range AND there's a card at that slot
+    return index >= 1 and index <= State.ROOM_SIZE and state.room.cards[index] ~= nil
 end
 
 --------------------------------------------------------------------------------
@@ -318,9 +351,10 @@ function State.shallowCopyState(state)
         newDiscard[i] = card
     end
     
+    -- Room cards use sparse array (slots 1-4, nil = empty)
     local newRoomCards = {}
-    for i, card in ipairs(state.room.cards) do
-        newRoomCards[i] = card
+    for i = 1, State.ROOM_SIZE do
+        newRoomCards[i] = state.room.cards[i]  -- Can be nil
     end
     
     return {
@@ -415,10 +449,13 @@ function State.assertNoDuplicateCards(state)
         if not valid then return false, err end
     end
     
-    -- Check room
-    for i, card in ipairs(state.room.cards) do
-        local valid, err = checkCard(card, "room[" .. i .. "]")
-        if not valid then return false, err end
+    -- Check room (handles sparse array)
+    for i = 1, State.ROOM_SIZE do
+        local card = state.room.cards[i]
+        if card then
+            local valid, err = checkCard(card, "room[" .. i .. "]")
+            if not valid then return false, err end
+        end
     end
     
     -- Check weapon (if equipped)

@@ -124,19 +124,22 @@ end
 function Render.drawRoom(state)
     local slots = Render.layoutRoomSlots()
     
-    -- Draw empty slot backgrounds for all positions
-    love.graphics.setColor(0.15, 0.15, 0.18, 1)
+    -- Draw all 4 slots (empty background first, then cards on top)
     for i = 1, State.ROOM_SIZE do
-        love.graphics.rectangle("fill", slots[i].x, slots[i].y, slots[i].w, slots[i].h, 8, 8)
-        love.graphics.setColor(0.25, 0.25, 0.3, 1)
-        love.graphics.setLineWidth(1)
-        love.graphics.rectangle("line", slots[i].x, slots[i].y, slots[i].w, slots[i].h, 8, 8)
-        love.graphics.setColor(0.15, 0.15, 0.18, 1)
-    end
-    
-    -- Draw actual cards
-    for i, card in ipairs(state.room.cards) do
-        Render.drawCardRect(card, slots[i], i)
+        local slot = slots[i]
+        local card = state.room.cards[i]
+        
+        if card then
+            -- Draw the card
+            Render.drawCardRect(card, slot, i)
+        else
+            -- Draw empty slot
+            love.graphics.setColor(0.15, 0.15, 0.18, 1)
+            love.graphics.rectangle("fill", slot.x, slot.y, slot.w, slot.h, 8, 8)
+            love.graphics.setColor(0.25, 0.25, 0.3, 1)
+            love.graphics.setLineWidth(1)
+            love.graphics.rectangle("line", slot.x, slot.y, slot.w, slot.h, 8, 8)
+        end
     end
     
     -- Room label
@@ -275,17 +278,35 @@ end
 --------------------------------------------------------------------------------
 
 function Render.drawDebug(state, game)
+    local Cards = require("cards")
+    
     -- Run assertions
     local assertionsOk, assertionErrors = State.runAllAssertions(state)
     local assertionStatus = assertionsOk and "✓ All OK" or "✗ ERRORS"
     
+    -- Build room cards string with full IDs (handles sparse array)
+    local roomCardsStr = ""
+    local hasCards = false
+    for i = 1, State.ROOM_SIZE do
+        local card = state.room.cards[i]
+        if card then
+            if hasCards then roomCardsStr = roomCardsStr .. " | " end
+            roomCardsStr = roomCardsStr .. string.format("[%d]%s(%s,%d)", 
+                i, Cards.cardToString(card), Cards.cardType(card):sub(1,3), Cards.cardValue(card))
+            hasCards = true
+        end
+    end
+    if not hasCards then roomCardsStr = "(empty)" end
+    
     local debugInfo = string.format(
-        "DEBUG: Seed=%s Fixed=%s RunState=%s Flee=%s\n" ..
-        "Monster Memory: ♠=%s ♣=%s | Assertions: %s",
+        "DEBUG: Seed=%s Fixed=%s RunState=%s\n" ..
+        "Room: %s\n" ..
+        "Memory: ♠=%s ♣=%s | Assertions: %s\n" ..
+        "P=Dump  Space=AutoPlay  S=ToggleSeed",
         tostring(state.seed),
         tostring(game.useFixedSeed),
         state.runState,
-        tostring(state.room.fleeUsed),
+        roomCardsStr,
         tostring(state.turnFlags.lastWeaponHitBySuit.spades),
         tostring(state.turnFlags.lastWeaponHitBySuit.clubs),
         assertionStatus
@@ -297,7 +318,7 @@ function Render.drawDebug(state, game)
     if not assertionsOk and assertionErrors then
         love.graphics.setColor(1, 0.3, 0.3, 1)
         for i, err in ipairs(assertionErrors) do
-            love.graphics.print("! " .. err, 20, 420 + (i-1) * 16)
+            love.graphics.print("! " .. err, 20, 460 + (i-1) * 16)
         end
     end
 end

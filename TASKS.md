@@ -124,11 +124,11 @@
 
 ## L. Debug utilities
 
-* [ ] Implement `P` hotkey to print a concise state dump to console.
-* [ ] Implement `showSeed` in HUD when debug is enabled.
-* [ ] Implement a debug overlay listing room cards with full IDs.
-* [ ] Implement a “fixed seed” toggle key (e.g., `S`) for reproducible runs.
-* [ ] Implement a minimal auto-play key (e.g., `Space`) for stress-testing.
+* [x] Implement `P` hotkey to print a concise state dump to console.
+* [x] Implement `showSeed` in HUD when debug is enabled.
+* [x] Implement a debug overlay listing room cards with full IDs.
+* [x] Implement a "fixed seed" toggle key (e.g., `S`) for reproducible runs.
+* [x] Implement a minimal auto-play key (e.g., `Space`) for stress-testing.
 
 ## M. Acceptance checks
 

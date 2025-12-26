@@ -106,6 +106,12 @@ function gameKeypressed(key)
         -- Toggle fixed seed (only in debug mode)
         game.useFixedSeed = not game.useFixedSeed
         resetGame()
+    elseif key == "p" and game.debug then
+        -- Print state dump to console
+        printStateDump()
+    elseif key == "space" and game.debug then
+        -- Auto-play: take first available card (for stress testing)
+        autoPlayStep()
     elseif key == "escape" then
         love.event.quit()
     -- Card actions with 1-4 keys
@@ -150,5 +156,69 @@ function resetGame()
     game.state.runState = State.RunState.AWAITING
     
     game.message = "Game reset! Seed: " .. seed
+end
+
+--------------------------------------------------------------------------------
+-- Debug Utilities
+--------------------------------------------------------------------------------
+
+-- L.1: Print concise state dump to console
+function printStateDump()
+    if not game.state then 
+        print("No game state")
+        return 
+    end
+    
+    local s = game.state
+    print("========== STATE DUMP ==========")
+    print(string.format("Seed: %s | RunState: %s", s.seed, s.runState))
+    print(string.format("HP: %d/%d | Weapon: %s", s.hp, s.maxHp, 
+        s.weapon and tostring(s.weapon.value) or "none"))
+    print(string.format("Deck: %d | Discard: %d | Flee: %s", 
+        #s.deck, #s.discard, tostring(s.room.fleeUsed)))
+    
+    -- Room cards with full IDs (handles sparse array)
+    print("Room cards:")
+    for i = 1, State.ROOM_SIZE do
+        local card = s.room.cards[i]
+        if card then
+            print(string.format("  [%d] %s (%s, value %d)", 
+                i, Cards.cardToString(card), Cards.cardType(card), Cards.cardValue(card)))
+        else
+            print(string.format("  [%d] (empty)", i))
+        end
+    end
+    
+    -- Monster memory
+    print(string.format("Monster Memory: ♠=%s ♣=%s", 
+        tostring(s.turnFlags.lastWeaponHitBySuit.spades),
+        tostring(s.turnFlags.lastWeaponHitBySuit.clubs)))
+    print("================================")
+end
+
+-- L.5: Auto-play one step (take first available card)
+function autoPlayStep()
+    if not game.state then return end
+    
+    local s = game.state
+    
+    -- Check if game is over
+    if s.runState == State.RunState.GAME_OVER or 
+       s.runState == State.RunState.VICTORY then
+        print("Auto-play: Game ended")
+        return
+    end
+    
+    -- Check if room has cards
+    if #s.room.cards == 0 then
+        print("Auto-play: Room empty")
+        return
+    end
+    
+    -- Simple strategy: take first card
+    -- Could be smarter (prioritize potions when low HP, etc.)
+    local index = 1
+    game.state = Actions.applyTake(game.state, index)
+    print(string.format("Auto-play: Took card %d", index))
 end
 

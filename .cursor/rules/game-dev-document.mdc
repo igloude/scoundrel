@@ -238,18 +238,33 @@ Acceptance:
 
 ## 7) Room Transition
 
-When room is empty (or flee ends room):
+### Normal Room Transition (after taking 3rd card)
+
+When 1 card remains in room after taking (3 cards taken):
 
 - If deck has cards:
-  - Draw next room (up to 4)
+  - The remaining card carries forward to the next room
+  - Draw 3 new cards from deck (the carry-over card + 3 new = 4 total)
   - Reset room.fleeUsed = false
-- If deck empty:
-  - Player wins (if hp > 0)
+- If deck is empty:
+  - Player must take the remaining card(s) to complete the game
+  - Victory triggers when room is empty AND deck is empty
+
+### Flee Room Transition
+
+When flee is used:
+
+- The chosen card goes to bottom of deck
+- All OTHER remaining room cards are discarded (not carried over)
+- Draw next room (up to 4 new cards)
+- Reset room.fleeUsed = false
 
 Acceptance:
 
-- Correct handling when deck has 1–3 cards remaining.
-- Victory triggers only after final room is completed/ended.
+- Player takes exactly 3 cards per room (unless forced to take more at end of game)
+- Unchosen card carries forward to next room
+- Correct handling when deck has 1–3 cards remaining
+- Victory triggers only after final room is completely empty
 
 ## 8 Data Model (Implementation Guidance)
 
