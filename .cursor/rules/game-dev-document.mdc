@@ -48,9 +48,16 @@ Acceptance:
 
 ## 2 Components & Terminology
 
-### 2.1 Standard Deck
+### 2.1 Scoundrel Deck
 
-52 cards: 4 suits × 13 ranks (A,2..10,J,Q,K).
+44 cards: Standard 52-card deck with the following removed:
+- Red Aces: A♥, A♦ (2 cards)
+- Red face cards: J♥, Q♥, K♥, J♦, Q♦, K♦ (6 cards)
+
+This leaves:
+- Monsters (♠/♣): A-K = 26 cards (includes black Aces and face cards)
+- Potions (♥): 2-10 = 9 cards  
+- Weapons (♦): 2-10 = 9 cards
 
 ### 2.2 Card Types (by suit)
 
@@ -130,7 +137,7 @@ Acceptance:
 
 ### 4.1 Start Run
 
-- Create full 52-card deck (or load from config)
+- Create Scoundrel deck (44 cards - see section 2.1)
 - Shuffle (seedable RNG)
 - Initialize player (hp, hpMax, weapon=null, lastWeaponHitBySuit reset)
 - Draw first room (up to 4 cards)
