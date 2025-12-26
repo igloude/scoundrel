@@ -1,6 +1,8 @@
 -- Scoundrel - A digital adaptation of the solo card game
 -- main.lua - Love2D entry point
 
+---@diagnostic disable: lowercase-global, undefined-global
+
 -- Modules
 local Cards = require("cards")
 local Deck = require("deck")

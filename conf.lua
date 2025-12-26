@@ -1,5 +1,7 @@
 -- Scoundrel - Love2D configuration
 
+---@diagnostic disable: lowercase-global, undefined-global
+
 function love.conf(t)
     -- Window settings
     t.window.title = "Scoundrel"

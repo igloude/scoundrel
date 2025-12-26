@@ -1,6 +1,8 @@
 -- Scoundrel - Rendering module
 -- All drawing functions for the game UI
 
+---@diagnostic disable: lowercase-global, undefined-global
+
 local Cards = require("cards")
 local State = require("state")
 
