@@ -1,0 +1,387 @@
+---
+alwaysApply: true
+---
+
+# Digital Scoundrel
+
+You are an AI pair-programmer working on a faithful digital adaptation of the solo card game "Scoundrel".
+Primary goal: implement the core game loop with minimal UI (text + simple card visuals).
+Secondary goal: polish UI, assets, accessibility & interactions.
+
+## 0 Non-Negotiables
+
+- Faithful rules implementation comes before polish.
+- Prefer deterministic, testable game logic.
+- Separate:
+  - Pure game state transitions (engine)
+  - Randomness (deck shuffle / draw)
+  - UI rendering & input
+- Every rule should map to:
+  - a state field
+  - a transition function
+  - a validation function
+  - tests
+
+## 1 Game Overview (Core Loop)
+
+### 1.1 Premise
+
+The player explores a dungeon represented by a standard deck of cards. The player’s goal is to survive the entire deck by managing health, equipment, and room-by-room decisions.
+
+### 1.2 Core Interaction
+
+At any point the player is in exactly one of:
+
+- Starting a run (initialize, shuffle, deal)
+- In a room (4 face-up cards available to resolve one-by-one)
+- Between rooms (cleanup / draw next room)
+- Run ended (win/lose)
+
+### 1.3 Win / Lose
+
+- Win: player survives until the deck is exhausted AND the final room is resolved.
+- Lose: player HP reaches 0 (or below) at any time.
+
+Acceptance:
+
+- End conditions are deterministic and unit-tested.
+
+## 2 Components & Terminology
+
+### 2.1 Standard Deck
+
+52 cards: 4 suits × 13 ranks (A,2..10,J,Q,K).
+
+### 2.2 Card Types (by suit)
+
+- Spades: Monsters
+- Clubs: Monsters
+- Hearts: Healing (food/potions)
+- Diamonds: Weapons
+
+### 2.3 Rank Values
+
+Define `rankValue`:
+
+- A = 1
+- 2–10 = pip value
+- J = 11
+- Q = 12
+- K = 13
+
+Acceptance:
+
+- One canonical mapping used everywhere.
+- Tests confirm all 13 ranks map correctly.
+
+### 2.4 “Room”
+
+A room is a set of 4 face-up cards drawn from the deck (or fewer when deck runs low). The player resolves cards in that room until none remain, then proceeds.
+
+## 3 Player State
+
+### 3.1 Health
+
+- `hp`: integer
+- `hpMax`: integer
+Start values (default, unless overridden in config):
+- `hpMax = 20`
+- `hp = hpMax`
+
+Healing:
+
+- Healing cannot increase HP above `hpMax`.
+
+Acceptance:
+
+- Healing clamps.
+- Damage reduces hp.
+- Game ends on hp <= 0.
+
+### 3.2 Weapon (Equipment)
+
+Player may hold at most one weapon:
+
+- `weapon`: null | { value: int } where value is the weapon’s rankValue
+When a new weapon is taken:
+- replaces current weapon (old weapon discarded).
+
+Acceptance:
+
+- Exactly one weapon at a time.
+- Replacing weapon discards old.
+
+### 3.3 “Monster Memory” (Same-Suit Rule)
+
+Track whether player is “in combat sequence” with a particular monster suit.
+Rule intent: when using a weapon, monsters of the same suit must be fought in non-decreasing order (you cannot fight a smaller one after fighting a bigger one of that suit with your weapon).
+
+Implementation:
+
+- Track `lastWeaponHitBySuit: { spades: int|null, clubs: int|null }`
+- Only applies when using weapon damage (not when taking full damage without weapon).
+
+Acceptance:
+
+- If lastWeaponHitBySuit[suit] = X, then you may only weapon-attack a monster of that suit with value >= X.
+- If player chooses to take full damage (no weapon used), this constraint does not update.
+
+## 4 Setup / Initialization
+
+### 4.1 Start Run
+
+- Create full 52-card deck (or load from config)
+- Shuffle (seedable RNG)
+- Initialize player (hp, hpMax, weapon=null, lastWeaponHitBySuit reset)
+- Draw first room (up to 4 cards)
+
+Acceptance:
+
+- Given a fixed RNG seed, the entire run is reproducible.
+- Initial room is correct size based on remaining deck.
+
+## 5 Turn Structure (Room Resolution)
+
+In a room, there are N face-up cards (N <= 4).
+Player repeatedly selects one available card and resolves it.
+Resolved cards are discarded.
+
+### 5.1 Player Action Options per Card
+
+Depending on card type:
+
+#### A Monster (spades/clubs)
+
+Player chooses one of:
+
+1) Fight with weapon (if weapon exists AND same-suit rule allows)
+2) Fight without weapon (take full monster value as damage)
+
+Effects:
+
+- If fighting with weapon:
+  - Damage = max(0, monsterValue - weaponValue)
+  - Update lastWeaponHitBySuit[monsterSuit] = monsterValue
+- If fighting without weapon:
+  - Damage = monsterValue
+  - Do NOT update lastWeaponHitBySuit
+
+Monster card always removed from room after resolution.
+
+Acceptance:
+
+- Weapon fight is blocked by same-suit constraint.
+- Damage calculation is correct and clamped at 0.
+
+#### B Healing (hearts)
+
+Player resolves:
+
+- hp = min(hpMax, hp + healValue)
+Card removed from room.
+
+Acceptance:
+
+- Healing works with clamp.
+- No other side effects.
+
+#### C Weapon (diamonds)
+
+Player resolves:
+
+- Equip weapon with weaponValue (discard old if present)
+Card removed from room.
+
+Acceptance:
+
+- Equipping replaces.
+- lastWeaponHitBySuit not affected.
+
+## 6 Special Rule: Flee / “Run Away”
+
+Once per room, the player may choose to flee:
+
+- Select exactly one card in the current room to “flee from”
+- That card is placed at the bottom of the deck (preserving its identity)
+- The remaining cards in the room are discarded (or resolved as per rules baseline)
+
+IMPORTANT: Implement as configurable because variants exist.
+Use default baseline:
+
+- Flee ends the room immediately.
+- The chosen card goes to bottom of deck.
+- All other room cards are discarded (not resolved).
+
+Config:
+
+- `fleeEnabled: true`
+- `fleePerRoomLimit: 1`
+
+State:
+
+- `room.fleeUsed: boolean`
+
+Acceptance:
+
+- Flee cannot be used more than once per room.
+- The bottom-of-deck insertion is correct.
+- Remaining room cards leave the room and do not affect hp/weapon.
+
+(If user later provides the exact PDF rule wording that differs, update this section and adjust tests accordingly.)
+
+## 7) Room Transition
+
+When room is empty (or flee ends room):
+
+- If deck has cards:
+  - Draw next room (up to 4)
+  - Reset room.fleeUsed = false
+- If deck empty:
+  - Player wins (if hp > 0)
+
+Acceptance:
+
+- Correct handling when deck has 1–3 cards remaining.
+- Victory triggers only after final room is completed/ended.
+
+## 8 Data Model (Implementation Guidance)
+
+### 8.1 Canonical Types
+
+- Card:
+  - id: unique string (stable)
+  - suit: "spades"|"clubs"|"hearts"|"diamonds"
+  - rank: "A"|"2"|...|"10"|"J"|"Q"|"K"
+  - value: int (derived)
+  - type: "monster"|"heal"|"weapon" (derived)
+
+- GameState:
+  - rngSeed: number|string
+  - deck: Card[] (top at end or start; choose one convention and document)
+  - discard: Card[]
+  - room:
+    - cards: Card[]
+    - fleeUsed: boolean
+  - player:
+    - hp: int
+    - hpMax: int
+    - weapon: null | { value: int }
+    - lastWeaponHitBySuit: { spades: int|null, clubs: int|null }
+  - status: "init"|"in_room"|"won"|"lost"
+
+### 8.2 Transition Functions (Pure)
+
+Implement pure reducers like:
+
+- startRun(seed, config) -> GameState
+- drawRoom(state) -> GameState
+- resolveCard(state, cardId, choice) -> GameState
+- fleeRoom(state, cardId) -> GameState
+
+Acceptance:
+
+- No mutation of input state (copy-on-write).
+- All transitions validate preconditions and return either:
+  - newState
+  - or an error object (preferred for UI messaging)
+
+## 9 Minimal UI Requirements (v1)
+
+- Display:
+  - HP (current/max)
+  - Equipped weapon value (or none)
+  - Room cards (face-up): show suit + rank + derived type + value
+  - Whether flee used this room
+  - Remaining deck count
+  - Discard count
+
+- Inputs:
+  - Click/select a card
+  - If monster: choose “weapon fight” or “no-weapon”
+  - If heal/weapon: single resolve action
+  - Flee action: pick a card to flee from (if available)
+
+Acceptance:
+
+- Player can complete a full run via UI without console commands.
+- Invalid actions are blocked with a clear message.
+
+## 10 Config / Variants (Do Not Overbuild)
+
+Provide a single config object:
+
+- hpMax (default 20)
+- roomSize (default 4)
+- fleeEnabled (default true)
+- fleePerRoomLimit (default 1)
+- rulesetName (string)
+
+Acceptance:
+
+- Defaults implement the base game.
+- Config is injected into engine, not hard-coded in UI.
+
+## 11 Testing Requirements
+
+### 11.1 Unit Tests (Engine)
+
+Must cover:
+
+- Deck creation (52 unique cards)
+- Rank mapping
+- Room drawing counts (4 / <4)
+- Heal clamp
+- Weapon replace
+- Monster damage formula (weapon and no-weapon)
+- Same-suit non-decreasing constraint
+- Flee: bottom-of-deck insertion + room discard behavior
+- Win/lose conditions
+
+### 11.2 Determinism Test
+
+Given fixed seed:
+
+- first room composition is identical across runs
+- full run sequence is reproducible with same player choices
+
+Acceptance:
+
+- Tests run headless; no dependency on Love2D graphics.
+
+## 12 Technical Notes (Love2D)
+
+- Use a single source of truth: `GameState`.
+- Love2D layer:
+  - collects input
+  - calls pure engine transitions
+  - renders state
+- Randomness:
+  - Seed RNG at startRun
+  - Do not call RNG anywhere else except shuffle/draw utilities.
+
+Acceptance:
+
+- Engine can be executed in isolation (Lua module) without Love2D runtime.
+
+## 13 Explicit Non-Goals (v1)
+
+Do NOT implement yet:
+
+- Meta progression / upgrades / floors
+- New card types / modified deck
+- Animations, particles, sound
+- Save/load, unlocks
+- Multiple characters or classes
+
+Acceptance:
+
+- Any PR adding v2 features must be rejected unless explicitly requested.
+
+## 14 Open Items / Known Ambiguities
+
+- Flee rule varies by ruleset. Current implementation uses the baseline described in section 6.
+- If a provided PDF ruleset contradicts any section, update the rule text FIRST, then update tests, then update engine.
+
+Acceptance:
+
+- Rules are centralized here; code follows this doc.
