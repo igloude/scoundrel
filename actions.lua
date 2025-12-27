@@ -367,7 +367,7 @@ function Actions.resolveFleeCard(state, card, index)
     if Actions.DEBUG_ASSERTIONS then
         for i = 1, State.ROOM_SIZE do
             local roomCard = newState.room.cards[i]
-            if roomCard and roomCard.id == removedCard.id then
+            if roomCard and removedCard and roomCard.id == removedCard.id then
                 print("=== FLEE BUG: Card not properly removed from room! ===")
                 print("Card: " .. Cards.cardToString(removedCard) .. " id=" .. removedCard.id)
                 print("Still at room slot: " .. i)

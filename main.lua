@@ -193,7 +193,7 @@ function printStateDump()
     print("========== STATE DUMP ==========")
     print(string.format("Seed: %s | RunState: %s", s.seed, s.runState))
     print(string.format("HP: %d/%d | Weapon: %s", s.hp, s.maxHp, 
-        s.weapon and tostring(s.weapon.value) or "none"))
+        s.weapon and tostring(s.weapon) or "none"))
     print(string.format("Deck: %d | Discard: %d | Flee: %s", 
         #s.deck, #s.discard, tostring(s.room.fleeUsed)))
     
@@ -227,7 +227,7 @@ function printStateDump()
     
     -- Total card count (should always equal 44)
     local totalCards = #s.deck + #s.discard + State.roomCardCount(s)
-    if s.weapon and s.weapon.card then
+    if s.weapon then
         totalCards = totalCards + 1
     end
     print(string.format("Total cards accounted for: %d/44", totalCards))
