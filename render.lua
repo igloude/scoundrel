@@ -199,12 +199,15 @@ function Render.drawHud(state)
         love.graphics.print("Flee: ready", fleeX, hpBarY + 4)
     end
     
-    -- Second row: Monster memory (if weapon equipped)
+    -- Second row: Weapon's max target (if weapon equipped and has been used)
     if state.weapon then
         love.graphics.setColor(Render.COLORS.textDim)
-        local memSpades = state.turnFlags.lastWeaponHitBySuit.spades or "-"
-        local memClubs = state.turnFlags.lastWeaponHitBySuit.clubs or "-"
-        love.graphics.print(string.format("Last hit: ♠%s ♣%s", memSpades, memClubs), 20, hpBarY + 28)
+        local lastSlain = state.turnFlags.lastMonsterSlain
+        if lastSlain then
+            love.graphics.print(string.format("Weapon can hit: < %d", lastSlain), 20, hpBarY + 28)
+        else
+            love.graphics.print("Weapon can hit: any monster", 20, hpBarY + 28)
+        end
     end
 end
 
@@ -300,17 +303,19 @@ function Render.drawDebug(state, game)
     end
     if not hasCards then roomCardsStr = "(empty)" end
     
+    local lastSlainStr = state.turnFlags.lastMonsterSlain 
+        and string.format("< %d", state.turnFlags.lastMonsterSlain) 
+        or "any"
     local debugInfo = string.format(
         "DEBUG: Seed=%s Fixed=%s RunState=%s\n" ..
         "Room: %s\n" ..
-        "Memory: ♠=%s ♣=%s | Assertions: %s\n" ..
+        "Weapon target: %s | Assertions: %s\n" ..
         "P=Dump  Space=AutoPlay  S=ToggleSeed",
         tostring(state.seed),
         tostring(game.useFixedSeed),
         state.runState,
         roomCardsStr,
-        tostring(state.turnFlags.lastWeaponHitBySuit.spades),
-        tostring(state.turnFlags.lastWeaponHitBySuit.clubs),
+        lastSlainStr,
         assertionStatus
     )
     love.graphics.setColor(0, 1, 0.5, 1)

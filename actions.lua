@@ -53,14 +53,13 @@ end
 
 --------------------------------------------------------------------------------
 -- G.8: clearWeaponUseFlags(state)
--- Resets the monster memory (lastWeaponHitBySuit) when equipping new weapon
+-- Resets the weapon's "max target" (lastMonsterSlain) when equipping new weapon
 -- Returns newState
 --------------------------------------------------------------------------------
 
 function Actions.clearWeaponUseFlags(state)
     local newState = State.shallowCopyState(state)
-    newState.turnFlags.lastWeaponHitBySuit.spades = nil
-    newState.turnFlags.lastWeaponHitBySuit.clubs = nil
+    newState.turnFlags.lastMonsterSlain = nil
     return newState
 end
 
@@ -97,6 +96,10 @@ end
 -- Calculates damage from a monster.
 -- If useWeapon is true and weapon exists: damage = max(0, monster - weapon)
 -- Otherwise: damage = monster value
+-- 
+-- Weapon constraint: After slaying a monster with a weapon, you can only use
+-- that weapon on monsters of LOWER power (any suit). The weapon's damage
+-- never changes, only what it can hit.
 -- Returns (damage, canUseWeapon, reason)
 --------------------------------------------------------------------------------
 
@@ -108,13 +111,14 @@ function Actions.computeMonsterDamage(state, monsterCard, useWeapon)
         return monsterValue, false, nil
     end
     
-    -- Check monster memory rule (same-suit non-decreasing)
-    local suit = monsterCard.suit
-    local lastHit = state.turnFlags.lastWeaponHitBySuit[suit]
+    -- Check weapon's "max target" rule:
+    -- After slaying a monster, weapon can only be used on monsters of LOWER power
+    local lastSlain = state.turnFlags.lastMonsterSlain
     
-    if lastHit and monsterValue < lastHit then
-        -- Cannot use weapon on smaller monster of same suit
-        return monsterValue, false, "Must fight larger " .. suit .. " first (last: " .. lastHit .. ")"
+    if lastSlain and monsterValue >= lastSlain then
+        -- Cannot use weapon on monster with power >= last slain monster
+        return monsterValue, false, string.format(
+            "Weapon can only hit monsters < %d (last slain: %d)", lastSlain, lastSlain)
     end
     
     -- Weapon applies: damage reduced
@@ -151,9 +155,10 @@ function Actions.resolveTakeMonster(state, card, index, useWeapon)
     -- Apply damage
     newState = Actions.applyDamage(newState, damage)
     
-    -- Update monster memory if weapon was used
+    -- Update weapon's "max target" if weapon was used
+    -- After slaying a monster with weapon, can only hit monsters of lower power
     if weaponUsed then
-        newState.turnFlags.lastWeaponHitBySuit[card.suit] = Cards.cardValue(card)
+        newState.turnFlags.lastMonsterSlain = Cards.cardValue(card)
     end
     
     -- Log the action

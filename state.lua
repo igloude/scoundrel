@@ -83,12 +83,11 @@ function State.createNewGameState(seed)
         errorMessage = nil,
         
         -- D.14: Turn flags for rule-specific state
-        -- lastWeaponHitBySuit tracks the "monster memory" rule
+        -- lastMonsterSlain tracks the weapon's "max target" rule:
+        -- After slaying a monster with a weapon, you can only use that weapon
+        -- on monsters of LOWER power. Resets when equipping a new weapon.
         turnFlags = {
-            lastWeaponHitBySuit = {
-                spades = nil,
-                clubs = nil
-            }
+            lastMonsterSlain = nil
         }
     }
     
@@ -376,10 +375,7 @@ function State.shallowCopyState(state)
         lastLogLine = state.lastLogLine,
         errorMessage = state.errorMessage,
         turnFlags = {
-            lastWeaponHitBySuit = {
-                spades = state.turnFlags.lastWeaponHitBySuit.spades,
-                clubs = state.turnFlags.lastWeaponHitBySuit.clubs
-            }
+            lastMonsterSlain = state.turnFlags.lastMonsterSlain
         }
     }
 end

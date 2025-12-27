@@ -209,10 +209,13 @@ function printStateDump()
         end
     end
     
-    -- Monster memory
-    print(string.format("Monster Memory: ♠=%s ♣=%s", 
-        tostring(s.turnFlags.lastWeaponHitBySuit.spades),
-        tostring(s.turnFlags.lastWeaponHitBySuit.clubs)))
+    -- Weapon target constraint
+    local lastSlain = s.turnFlags.lastMonsterSlain
+    if lastSlain then
+        print(string.format("Weapon can hit: < %d", lastSlain))
+    else
+        print("Weapon can hit: any monster")
+    end
     
     -- Run duplicate assertion
     local valid, err = State.assertNoDuplicateCards(s)
