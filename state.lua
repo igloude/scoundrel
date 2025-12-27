@@ -45,6 +45,30 @@ function State.createNewGameState(seed)
     
     -- Create and shuffle the Scoundrel deck
     local deck = Deck.createScoundrelDeck()
+    
+    -- Debug assertion: verify deck has no duplicates before shuffle
+    if State.DEBUG_DEAL then
+        local seenIds = {}
+        local seenCards = {}
+        for i, card in ipairs(deck) do
+            if seenIds[card.id] then
+                print("=== DECK CREATION BUG: Duplicate ID before shuffle! ===")
+                print("Card: " .. Cards.cardToString(card) .. " id=" .. card.id)
+                print("========================================================")
+            end
+            seenIds[card.id] = true
+            
+            local cardStr = Cards.cardToString(card)
+            if seenCards[cardStr] then
+                print("=== DECK CREATION BUG: Duplicate card before shuffle! ===")
+                print("Card: " .. cardStr)
+                print("=========================================================")
+            end
+            seenCards[cardStr] = true
+        end
+        print("Deck created with " .. #deck .. " cards, all unique IDs verified")
+    end
+    
     Deck.shuffle(deck)
     
     -- Build initial state
@@ -142,6 +166,9 @@ end
 -- Returns newState (pure function - does not mutate input)
 --------------------------------------------------------------------------------
 
+-- Debug flag for deal assertions
+State.DEBUG_DEAL = true
+
 function State.dealOneToRoom(state)
     if State.deckIsEmpty(state) or State.roomIsFull(state) then
         return state
@@ -163,6 +190,28 @@ function State.dealOneToRoom(state)
     
     -- Draw card from deck and place in slot
     local card = table.remove(newState.deck)
+    
+    -- Debug assertion: check if this card matches any existing room card
+    if State.DEBUG_DEAL then
+        local Cards = require("cards")
+        for i = 1, State.ROOM_SIZE do
+            local existingCard = newState.room.cards[i]
+            if existingCard then
+                if existingCard.id == card.id then
+                    print("=== DEAL BUG: Drawing card with same ID as room card! ===")
+                    print("Drawn card: " .. Cards.cardToString(card) .. " id=" .. card.id)
+                    print("Existing card at slot " .. i .. ": " .. Cards.cardToString(existingCard) .. " id=" .. existingCard.id)
+                    print("=========================================================")
+                elseif existingCard.suit == card.suit and existingCard.rank == card.rank then
+                    print("=== DEAL BUG: Drawing duplicate card (same suit+rank)! ===")
+                    print("Drawn card: " .. Cards.cardToString(card) .. " id=" .. card.id)
+                    print("Existing card at slot " .. i .. ": " .. Cards.cardToString(existingCard) .. " id=" .. existingCard.id)
+                    print("==========================================================")
+                end
+            end
+        end
+    end
+    
     newState.room.cards[slot] = card
     
     return newState

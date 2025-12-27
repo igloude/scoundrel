@@ -231,7 +231,8 @@ end
 --------------------------------------------------------------------------------
 
 function Actions.afterSuccessfulTake(state)
-    local newState = state
+    -- Always work with a copy to avoid mutation issues
+    local newState = State.shallowCopyState(state)
     
     -- Check if player died
     if newState.hp <= 0 then
@@ -243,22 +244,45 @@ function Actions.afterSuccessfulTake(state)
     
     -- Room transition: 1 card left and deck has cards
     if roomCount == 1 and not State.deckIsEmpty(newState) then
-        -- Find the remaining card and move it to position 1
+        -- Find the remaining card's position and get reference
         local carryOverCard = nil
+        local carryOverIndex = nil
         for i = 1, State.ROOM_SIZE do
             if newState.room.cards[i] then
                 carryOverCard = newState.room.cards[i]
+                carryOverIndex = i
                 break
             end
         end
         
-        -- Reset room with carry-over card at position 1
-        newState = State.shallowCopyState(newState)
-        newState.room.cards = { carryOverCard, nil, nil, nil }
+        -- Debug assertion: verify carryOverCard is not in the deck
+        if Actions.DEBUG_ASSERTIONS and carryOverCard then
+            for i, deckCard in ipairs(newState.deck) do
+                if deckCard.id == carryOverCard.id then
+                    print("=== CARRY-OVER BUG: Card already in deck! ===")
+                    print("Card: " .. Cards.cardToString(carryOverCard) .. " id=" .. carryOverCard.id)
+                    print("Found at deck position: " .. i)
+                    print("============================================")
+                end
+            end
+        end
+        
+        -- Clear the old position first, then set position 1
+        -- This ensures we don't have the card in two places
+        for i = 1, State.ROOM_SIZE do
+            newState.room.cards[i] = nil
+        end
+        newState.room.cards[1] = carryOverCard
         newState.room.fleeUsed = false
+        
+        -- Debug assertion: verify clean state before dealing
+        runAssertions(newState, "after carry-over setup, before dealing")
         
         -- Draw 3 new cards to fill positions 2, 3, 4
         newState = State.dealRoomUpToFull(newState)
+        
+        -- Debug assertion: verify no duplicates after dealing
+        runAssertions(newState, "after carry-over dealing")
         
         return newState
     end
@@ -339,8 +363,24 @@ function Actions.resolveFleeCard(state, card, index)
     -- Remove card from room (don't discard it)
     local newState, removedCard = State.removeRoomCard(state, index)
     
+    -- Debug: verify card was actually removed from room
+    if Actions.DEBUG_ASSERTIONS then
+        for i = 1, State.ROOM_SIZE do
+            local roomCard = newState.room.cards[i]
+            if roomCard and roomCard.id == removedCard.id then
+                print("=== FLEE BUG: Card not properly removed from room! ===")
+                print("Card: " .. Cards.cardToString(removedCard) .. " id=" .. removedCard.id)
+                print("Still at room slot: " .. i)
+                print("======================================================")
+            end
+        end
+    end
+    
     -- Put the card at the bottom of the deck
     Deck.putCardOnBottom(newState.deck, removedCard)
+    
+    -- Debug: verify card is now in deck and not in room
+    runAssertions(newState, "after resolveFleeCard")
     
     return newState
 end
