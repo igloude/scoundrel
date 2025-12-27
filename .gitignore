@@ -1,0 +1,34 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Love2D builds
+*.love
+*.app
+*.exe
+*.dmg
+
+# Editor/IDE
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Lua
+*.luac
+luarocks/
+
+# Cursor
+.cursorignore
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*~
+
