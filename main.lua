@@ -138,8 +138,12 @@ function gameKeypressed(key)
     elseif key == "1" or key == "2" or key == "3" or key == "4" then
         local index = tonumber(key)
         -- F+number = flee, number alone = take
+        -- Shift+number = fight barehanded (without weapon)
         if love.keyboard.isDown("f") then
             game.state = Actions.applyFlee(game.state, index)
+        elseif love.keyboard.isDown("lshift") or love.keyboard.isDown("rshift") then
+            -- Fight barehanded: explicitly pass useWeapon = false
+            game.state = Actions.applyTake(game.state, index, false)
         else
             game.state = Actions.applyTake(game.state, index)
         end
@@ -157,8 +161,14 @@ function gameMousepressed(x, y, button)
     if not game.state.room.cards[index] then return end
     
     -- Left click = take, right click = flee
+    -- Shift+Left click = fight barehanded (without weapon)
     if button == 1 then
-        game.state = Actions.applyTake(game.state, index)
+        if love.keyboard.isDown("lshift") or love.keyboard.isDown("rshift") then
+            -- Fight barehanded: explicitly pass useWeapon = false
+            game.state = Actions.applyTake(game.state, index, false)
+        else
+            game.state = Actions.applyTake(game.state, index)
+        end
     elseif button == 2 then
         game.state = Actions.applyFlee(game.state, index)
     end

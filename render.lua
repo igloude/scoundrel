@@ -274,7 +274,7 @@ end
 
 function Render.drawControls()
     love.graphics.setColor(Render.COLORS.textDim)
-    love.graphics.print("1-4 or Left-Click=Take  |  F+1-4 or Right-Click=Flee  |  R=Reset  D=Debug  ESC=Quit", 20, 570)
+    love.graphics.print("1-4 or Click=Take  |  Shift+Click=Barehanded  |  F+1-4 or Right-Click=Flee  |  R=Reset", 20, 570)
 end
 
 --------------------------------------------------------------------------------

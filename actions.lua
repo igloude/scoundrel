@@ -134,6 +134,9 @@ end
 --------------------------------------------------------------------------------
 
 function Actions.resolveTakeMonster(state, card, index, useWeapon)
+    -- Track if player explicitly chose barehanded
+    local choseBarehanded = (useWeapon == false)
+    
     -- Default: use weapon if we have one
     if useWeapon == nil then
         useWeapon = (state.weapon ~= nil)
@@ -161,10 +164,15 @@ function Actions.resolveTakeMonster(state, card, index, useWeapon)
         newState.turnFlags.lastMonsterSlain = Cards.cardValue(card)
     end
     
-    -- Log the action
-    local weaponStr = weaponUsed and " (weapon)" or ""
+    -- Log the action with clear fight style indication
+    local fightStyle = ""
+    if weaponUsed then
+        fightStyle = " with weapon"
+    elseif choseBarehanded and state.weapon then
+        fightStyle = " barehanded"
+    end
     local logMsg = string.format("Fought %s%s, took %d damage", 
-        Cards.cardToString(card), weaponStr, damage)
+        Cards.cardToString(card), fightStyle, damage)
     newState = State.setLog(newState, logMsg)
     
     return newState
