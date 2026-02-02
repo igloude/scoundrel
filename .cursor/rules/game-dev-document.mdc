@@ -4,7 +4,7 @@ alwaysApply: true
 
 # Digital Scoundrel
 
-You are an AI pair-programmer working on a faithful digital adaptation of the solo card game "Scoundrel".
+You are an AI pair-programmer working on a faithful digital adaptation of the solo card game **Scoundrel**.
 Primary goal: implement the core game loop with minimal UI (text + simple card visuals).
 Secondary goal: polish UI, assets, accessibility & interactions.
 
@@ -33,13 +33,13 @@ The player explores a dungeon represented by a standard deck of cards. The playe
 At any point the player is in exactly one of:
 
 - Starting a run (initialize, shuffle, deal)
-- In a room (4 face-up cards available to resolve one-by-one)
+- In a room (4 face-up cards available to choose from, resolving choices)
 - Between rooms (cleanup / draw next room)
-- Run ended (win/lose)
+- Run ended (win/lose + score)
 
 ### 1.3 Win / Lose
 
-- Win: player survives until the deck is exhausted AND the final room is resolved.
+- Win: player survives until the Dungeon deck is exhausted **and** the final remaining room cards are resolved.
 - Lose: player HP reaches 0 (or below) at any time.
 
 Acceptance:
@@ -48,42 +48,56 @@ Acceptance:
 
 ## 2 Components & Terminology
 
-### 2.1 Scoundrel Deck
+### 2.1 Scoundrel Deck (“Dungeon”)
 
-44 cards: Standard 52-card deck with the following removed:
-- Red Aces: A♥, A♦ (2 cards)
-- Red face cards: J♥, Q♥, K♥, J♦, Q♦, K♦ (6 cards)
+Start with a standard 52-card deck.
 
-This leaves:
-- Monsters (♠/♣): A-K = 26 cards (includes black Aces and face cards)
-- Potions (♥): 2-10 = 9 cards  
+Remove (not used in the game):
+
+- All Jokers (if present in the physical deck)
+- All **Red face cards**: J♥, Q♥, K♥, J♦, Q♦, K♦ (6 cards)
+- All **Red aces**: A♥, A♦ (2 cards)
+
+This leaves (from a 52-card deck):
+
+- Monsters (♠/♣): A-K = 26 cards (includes black aces and face cards)
+- Potions (♥): 2-10 = 9 cards
 - Weapons (♦): 2-10 = 9 cards
+
+Total: 44 cards (plus “remove Jokers” note for physical decks).
 
 ### 2.2 Card Types (by suit)
 
 - Spades: Monsters
 - Clubs: Monsters
-- Hearts: Healing (food/potions)
+- Hearts: Health Potions
 - Diamonds: Weapons
 
-### 2.3 Rank Values
+### 2.3 Ordered Values (Monsters)
 
-Define `rankValue`:
+Monsters (clubs/spades) deal damage equal to their **ordered value**:
 
-- A = 1
 - 2–10 = pip value
 - J = 11
 - Q = 12
 - K = 13
+- A = 14
+
+Weapons and potions only exist as ranks 2–10, and their value is their pip value.
 
 Acceptance:
 
-- One canonical mapping used everywhere.
-- Tests confirm all 13 ranks map correctly.
+- One canonical “monster ordered value” mapping used everywhere.
+- Tests confirm monster mapping for A, J, Q, K and 2–10.
 
 ### 2.4 “Room”
 
-A room is a set of 4 face-up cards drawn from the deck (or fewer when deck runs low). The player resolves cards in that room until none remain, then proceeds.
+A Room is the set of **up to 4 face-up cards** in front of the player.
+
+- At the start of a turn, reveal cards until there are **4 cards face-up** in the Room, if possible.
+- At the end of a normal turn, **exactly 1 card remains** face-up and carries forward into the next Room.
+
+(When the Dungeon is low/empty, the Room can be fewer than 4.)
 
 ## 3 Player State
 
@@ -91,13 +105,15 @@ A room is a set of 4 face-up cards drawn from the deck (or fewer when deck runs 
 
 - `hp`: integer
 - `hpMax`: integer
+
 Start values (default, unless overridden in config):
+
 - `hpMax = 20`
 - `hp = hpMax`
 
 Healing:
 
-- Healing cannot increase HP above `hpMax`.
+- HP cannot exceed `hpMax`.
 
 Acceptance:
 
@@ -107,198 +123,259 @@ Acceptance:
 
 ### 3.2 Weapon (Equipment)
 
-Player may hold at most one weapon:
+Player may hold at most one weapon.
 
-- `weapon`: null | { value: int } where value is the weapon’s rankValue
-When a new weapon is taken:
-- replaces current weapon (old weapon discarded).
+- `weapon`: null | { value: int, lastSlainMonsterValue: int|null, slainStack: Card[] }
+
+Rules:
+
+- Weapons (♦ 2–10) are **binding**: if you take one, you **must equip it**.
+- Equipping a new weapon **replaces** the old weapon.
+- When replacing a weapon, the **old weapon and any monsters stacked on it** go to the discard pile.
 
 Acceptance:
 
 - Exactly one weapon at a time.
-- Replacing weapon discards old.
+- Replacing weapon discards the old weapon _and_ its stacked monsters.
 
-### 3.3 “Monster Memory” (Same-Suit Rule)
+### 3.3 Weapon Usage Constraint (“Descending Monster Rule”)
 
-Track whether player is “in combat sequence” with a particular monster suit.
-Rule intent: when using a weapon, monsters of the same suit must be fought in non-decreasing order (you cannot fight a smaller one after fighting a bigger one of that suit with your weapon).
+When a weapon is used to slay a monster, that monster is placed on the weapon’s stack.
+
+Constraint:
+
+- After a weapon has slain a monster of value **X**, that weapon may only be used to slay monsters of value **<= X** until the weapon is replaced.
 
 Implementation:
 
-- Track `lastWeaponHitBySuit: { spades: int|null, clubs: int|null }`
-- Only applies when using weapon damage (not when taking full damage without weapon).
+- `weapon.lastSlainMonsterValue`:
+  - `null` initially (weapon unused) → weapon can be used on any monster.
+  - Set to the slain monster’s value each time the weapon is used.
+- The constraint applies **only when choosing to fight using the weapon**.
+- Fighting barehanded does not change `weapon.lastSlainMonsterValue`.
 
 Acceptance:
 
-- If lastWeaponHitBySuit[suit] = X, then you may only weapon-attack a monster of that suit with value >= X.
-- If player chooses to take full damage (no weapon used), this constraint does not update.
+- If `weapon.lastSlainMonsterValue = X`, weapon-fighting is only allowed for monsters with value `<= X`.
+- After a weapon fight, `weapon.lastSlainMonsterValue` updates to that monster’s value.
 
 ## 4 Setup / Initialization
 
 ### 4.1 Start Run
 
-- Create Scoundrel deck (44 cards - see section 2.1)
-- Shuffle (seedable RNG)
-- Initialize player (hp, hpMax, weapon=null, lastWeaponHitBySuit reset)
-- Draw first room (up to 4 cards)
+- Create the Scoundrel deck (see section 2.1).
+- Shuffle (seedable RNG).
+- Initialize player:
+  - hp = 20
+  - hpMax = 20
+  - weapon = null
+- Initialize turn flags:
+  - `previousTurnAvoided = false`
+- Reveal cards until Room has up to 4 cards.
 
 Acceptance:
 
 - Given a fixed RNG seed, the entire run is reproducible.
-- Initial room is correct size based on remaining deck.
+- Initial Room is correct size based on remaining deck.
 
 ## 5 Turn Structure (Room Resolution)
 
-In a room, there are N face-up cards (N <= 4).
-Player repeatedly selects one available card and resolves it.
-Resolved cards are discarded.
+Each turn starts with a Room of up to 4 face-up cards.
+If fewer than 4 are face-up and the Dungeon has cards, reveal more until 4 or the Dungeon is empty.
 
-### 5.1 Player Action Options per Card
+On a turn, the player either:
 
-Depending on card type:
+- **Avoids the Room** (special action), or
+- Resolves **exactly 3 of the 4 cards** (or as many as exist if fewer than 4), one-by-one.
 
-#### A Monster (spades/clubs)
+### 5.1 Avoiding the Room (“Avoid Room”)
 
-Player chooses one of:
+The player may avoid the Room:
 
-1) Fight with weapon (if weapon exists AND same-suit rule allows)
-2) Fight without weapon (take full monster value as damage)
+- Take all face-up Room cards in one action and place them at the **bottom of the Dungeon** (preserving their order relative to each other or as a single block; choose one convention and test it).
+- Then immediately reveal cards until Room has up to 4 cards for the next turn.
+
+Restriction:
+
+- You may avoid as many Rooms as you want, but you may **not avoid two Rooms in a row**.
+
+Implementation:
+
+- Track `previousTurnAvoided: boolean`.
+- Avoid is allowed only if `previousTurnAvoided == false` **and** the Room has 4 cards available (because the rule is “scoop up all four cards”).
+
+Acceptance:
+
+- Avoid moves all 4 Room cards to the bottom of the Dungeon.
+- Avoid is blocked if the last turn was also an avoid.
+- Avoid does not change HP/weapon.
+
+### 5.2 Resolving Cards (Normal Turn)
+
+If the player does not avoid:
+
+- The player must resolve **3 of the Room’s cards**, one at a time.
+- After resolving 3 cards, the turn ends and the **4th card remains face-up** to become part of the next Room.
+
+If the Dungeon is low/empty and fewer than 4 cards exist in the Room:
+
+- The player resolves as many as required until the Dungeon is exhausted and the Room is empty (this may take multiple turns with fewer than 4 cards available).
+
+Turn-limited rule:
+
+- The player may use **at most one Health Potion per turn**.
+
+Implementation:
+
+- Track `potionUsedThisTurn: boolean` reset at the start of each normal (non-avoid) turn.
+
+Acceptance:
+
+- A normal turn resolves exactly 3 cards when 4 are available.
+- Exactly 1 card carries forward to the next Room after a normal turn.
+- Potion usage is limited to one per turn.
+
+## 6 Card Resolution Rules
+
+### 6.1 Monster (spades/clubs)
+
+When a Monster is chosen, player chooses one of:
+
+1. **Fight with weapon** (only if a weapon is equipped and the weapon usage constraint allows)
+2. **Fight barehanded**
 
 Effects:
 
-- If fighting with weapon:
-  - Damage = max(0, monsterValue - weaponValue)
-  - Update lastWeaponHitBySuit[monsterSuit] = monsterValue
-- If fighting without weapon:
+- Barehanded:
   - Damage = monsterValue
-  - Do NOT update lastWeaponHitBySuit
-
-Monster card always removed from room after resolution.
+  - Monster is discarded
+- With weapon:
+  - Damage = max(0, monsterValue - weapon.value)
+  - Monster is added to `weapon.slainStack`
+  - `weapon.lastSlainMonsterValue = monsterValue`
+  - Monster is not discarded separately (it lives on the weapon until the weapon is replaced; at replacement, it is discarded with the weapon)
 
 Acceptance:
 
-- Weapon fight is blocked by same-suit constraint.
+- Weapon fight is blocked if `weapon.lastSlainMonsterValue != null` and `monsterValue > weapon.lastSlainMonsterValue`.
 - Damage calculation is correct and clamped at 0.
 
-#### B Healing (hearts)
+### 6.2 Health Potion (hearts 2–10)
 
-Player resolves:
-
-- hp = min(hpMax, hp + healValue)
-Card removed from room.
+- If `potionUsedThisTurn == false`:
+  - hp = min(hpMax, hp + potionValue)
+  - potion is discarded
+  - set `potionUsedThisTurn = true`
+- If `potionUsedThisTurn == true`:
+  - potion is discarded
+  - hp does not change
 
 Acceptance:
 
-- Healing works with clamp.
-- No other side effects.
+- Healing clamps to hpMax.
+- Second potion in the same turn provides no healing.
 
-#### C Weapon (diamonds)
+### 6.3 Weapon (diamonds 2–10)
 
-Player resolves:
-
-- Equip weapon with weaponValue (discard old if present)
-Card removed from room.
+- The player must equip it.
+- If a previous weapon exists:
+  - Discard the previous weapon **and** all monsters in its `slainStack`.
+- New weapon starts with:
+  - `value = weaponValue`
+  - `lastSlainMonsterValue = null`
+  - `slainStack = []`
 
 Acceptance:
 
 - Equipping replaces.
-- lastWeaponHitBySuit not affected.
+- Old weapon + its stack are discarded together.
 
-## 6 Special Rule: Flee / “Run Away”
+## 7 Room Transition
 
-Once per room, the player may choose to flee:
+### 7.1 After Avoid
 
-- Select exactly one card in the current room to “flee from”
-- That card is placed at the bottom of the deck (preserving its identity)
-- The remaining cards in the room are discarded (or resolved as per rules baseline)
+- Room becomes empty (because all 4 were moved to bottom of Dungeon).
+- Set `previousTurnAvoided = true`.
+- Next turn: reveal until Room has up to 4 cards.
 
-IMPORTANT: Implement as configurable because variants exist.
-Use default baseline:
+### 7.2 After Normal Turn (3 cards resolved)
 
-- Flee ends the room immediately.
-- The chosen card goes to bottom of deck.
-- All other room cards are discarded (not resolved).
+- Exactly 1 Room card remains face-up.
+- Set `previousTurnAvoided = false`.
+- Next turn: reveal up to 3 new cards to bring Room to 4 (or as many as the Dungeon has).
 
-Config:
+### 7.3 End of Game Handling
 
-- `fleeEnabled: true`
-- `fleePerRoomLimit: 1`
-
-State:
-
-- `room.fleeUsed: boolean`
+- The game ends immediately when `hp <= 0` (loss).
+- The game ends in a win when:
+  - The Dungeon is empty **and**
+  - The Room is empty (all remaining cards have been resolved).
 
 Acceptance:
 
-- Flee cannot be used more than once per room.
-- The bottom-of-deck insertion is correct.
-- Remaining room cards leave the room and do not affect hp/weapon.
+- Carry-over behavior works correctly.
+- Correct handling when the Dungeon has fewer than 3 cards remaining to refill the Room.
+- Victory triggers only after Dungeon and Room are both empty.
 
-(If user later provides the exact PDF rule wording that differs, update this section and adjust tests accordingly.)
+## 8 Scoring
 
-## 7) Room Transition
+Compute score at the end of the run:
 
-### Normal Room Transition (after taking 3rd card)
-
-When 1 card remains in room after taking (3 cards taken):
-
-- If deck has cards:
-  - The remaining card carries forward to the next room
-  - Draw 3 new cards from deck (the carry-over card + 3 new = 4 total)
-  - Reset room.fleeUsed = false
-- If deck is empty:
-  - Player must take the remaining card(s) to complete the game
-  - Victory triggers when room is empty AND deck is empty
-
-### Flee Room Transition
-
-When flee is used:
-
-- The chosen card goes to bottom of deck
-- All OTHER remaining room cards are discarded (not carried over)
-- Draw next room (up to 4 new cards)
-- Reset room.fleeUsed = false
+- If the player **loses** (hp <= 0):
+  - Find all remaining **monsters** still in the Dungeon (unseen/undrawn).
+  - Score = `hp - sum(remainingMonsterValues)` (a negative number in typical play; preserve exact arithmetic).
+- If the player **wins** (Dungeon empty and Room empty):
+  - Score = `hp`, **except**:
+    - If `hp == 20` and the **last resolved card** was a Health Potion, score is `hp + potionValue` (i.e., 20 + that potion’s value).
 
 Acceptance:
 
-- Player takes exactly 3 cards per room (unless forced to take more at end of game)
-- Unchosen card carries forward to next room
-- Correct handling when deck has 1–3 cards remaining
-- Victory triggers only after final room is completely empty
+- Loss score subtracts remaining monsters in Dungeon only.
+- Win score matches rule, including the special “last card potion at full health” case.
 
-## 8 Data Model (Implementation Guidance)
+## 9 Data Model (Implementation Guidance)
 
-### 8.1 Canonical Types
+### 9.1 Canonical Types
 
 - Card:
   - id: unique string (stable)
   - suit: "spades"|"clubs"|"hearts"|"diamonds"
   - rank: "A"|"2"|...|"10"|"J"|"Q"|"K"
-  - value: int (derived)
-  - type: "monster"|"heal"|"weapon" (derived)
+  - type: "monster"|"potion"|"weapon" (derived from suit)
+  - value:
+    - if monster: ordered value (A=14, J=11, Q=12, K=13, 2–10=pip)
+    - else: pip value (2–10 only)
 
 - GameState:
   - rngSeed: number|string
-  - deck: Card[] (top at end or start; choose one convention and document)
-  - discard: Card[]
+  - deck: Card[] (Dungeon; choose one convention for “top” and document)
+  - discardCount: int
   - room:
-    - cards: Card[]
-    - fleeUsed: boolean
+    - cards: Card[] (face-up)
   - player:
     - hp: int
     - hpMax: int
-    - weapon: null | { value: int }
-    - lastWeaponHitBySuit: { spades: int|null, clubs: int|null }
+    - weapon: null | { value: int, lastSlainMonsterValue: int|null, slainStack: Card[] }
+  - turn:
+    - potionUsedThisTurn: boolean
+    - previousTurnAvoided: boolean
+    - lastResolvedCard: null | Card (for scoring)
   - status: "init"|"in_room"|"won"|"lost"
+  - score: null | int
 
-### 8.2 Transition Functions (Pure)
+Notes:
+
+- Discard pile is **face-down** in the physical game. Digitally, track count for UI; keep identities hidden by default.
+
+### 9.2 Transition Functions (Pure)
 
 Implement pure reducers like:
 
 - startRun(seed, config) -> GameState
-- drawRoom(state) -> GameState
+- revealToRoomSize(state) -> GameState
 - resolveCard(state, cardId, choice) -> GameState
-- fleeRoom(state, cardId) -> GameState
+- avoidRoom(state) -> GameState
+- endRunAndScore(state) -> GameState
 
 Acceptance:
 
@@ -307,35 +384,34 @@ Acceptance:
   - newState
   - or an error object (preferred for UI messaging)
 
-## 9 Minimal UI Requirements (v1)
+## 10 Minimal UI Requirements (v1)
 
 - Display:
   - HP (current/max)
   - Equipped weapon value (or none)
+  - Weapon constraint indicator (e.g., “weapon can only slay <= X” when `lastSlainMonsterValue` is set)
   - Room cards (face-up): show suit + rank + derived type + value
-  - Whether flee used this room
-  - Remaining deck count
-  - Discard count
+  - Remaining Dungeon count
+  - Discard count (only count; do not reveal discard identities)
+  - Whether avoiding is currently allowed (blocked if last turn avoided)
 
 - Inputs:
   - Click/select a card
-  - If monster: choose “weapon fight” or “no-weapon”
-  - If heal/weapon: single resolve action
-  - Flee action: pick a card to flee from (if available)
+  - If monster: choose “weapon fight” (if allowed) or “barehanded”
+  - If potion/weapon: single resolve action
+  - Avoid Room action (only when allowed)
 
 Acceptance:
 
 - Player can complete a full run via UI without console commands.
 - Invalid actions are blocked with a clear message.
 
-## 10 Config / Variants (Do Not Overbuild)
+## 11 Config (Do Not Overbuild)
 
 Provide a single config object:
 
 - hpMax (default 20)
 - roomSize (default 4)
-- fleeEnabled (default true)
-- fleePerRoomLimit (default 1)
 - rulesetName (string)
 
 Acceptance:
@@ -343,34 +419,36 @@ Acceptance:
 - Defaults implement the base game.
 - Config is injected into engine, not hard-coded in UI.
 
-## 11 Testing Requirements
+## 12 Testing Requirements
 
-### 11.1 Unit Tests (Engine)
+### 12.1 Unit Tests (Engine)
 
 Must cover:
 
-- Deck creation (52 unique cards)
-- Rank mapping
-- Room drawing counts (4 / <4)
-- Heal clamp
-- Weapon replace
-- Monster damage formula (weapon and no-weapon)
-- Same-suit non-decreasing constraint
-- Flee: bottom-of-deck insertion + room discard behavior
+- Deck creation (52 unique cards) and removal rules (red aces, red face cards; jokers not present in a 52-card deck)
+- Monster ordered value mapping (A=14, J/Q/K, 2–10)
+- Room reveal logic (fill to 4 when possible)
+- Turn structure: resolve 3, carry 1
+- Potion clamp + one-per-turn rule
+- Weapon replace discards old weapon + its stack
+- Monster damage formula (weapon and barehanded)
+- Weapon usage constraint (must be <= last slain value)
+- Avoid: moves all 4 room cards to bottom; cannot avoid twice in a row
 - Win/lose conditions
+- Scoring (loss subtract remaining monsters; win special potion-at-20 case)
 
-### 11.2 Determinism Test
+### 12.2 Determinism Test
 
 Given fixed seed:
 
-- first room composition is identical across runs
+- initial Room composition is identical across runs
 - full run sequence is reproducible with same player choices
 
 Acceptance:
 
 - Tests run headless; no dependency on Love2D graphics.
 
-## 12 Technical Notes (Love2D)
+## 13 Technical Notes (Love2D)
 
 - Use a single source of truth: `GameState`.
 - Love2D layer:
@@ -379,13 +457,13 @@ Acceptance:
   - renders state
 - Randomness:
   - Seed RNG at startRun
-  - Do not call RNG anywhere else except shuffle/draw utilities.
+  - Do not call RNG anywhere else except shuffle/reveal utilities.
 
 Acceptance:
 
 - Engine can be executed in isolation (Lua module) without Love2D runtime.
 
-## 13 Explicit Non-Goals (v1)
+## 14 Explicit Non-Goals (v1)
 
 Do NOT implement yet:
 
@@ -399,10 +477,10 @@ Acceptance:
 
 - Any PR adding v2 features must be rejected unless explicitly requested.
 
-## 14 Open Items / Known Ambiguities
+## 15 Open Items / Known Ambiguities
 
-- Flee rule varies by ruleset. Current implementation uses the baseline described in section 6.
-- If a provided PDF ruleset contradicts any section, update the rule text FIRST, then update tests, then update engine.
+- When avoiding a Room, placing “all four cards at the bottom” is a single action; define and test whether that preserves their internal order as a block (recommended) or reverses/shuffles them (not recommended).
+- Discard is face-down; keep identities hidden by default, but allow debug inspection in dev/test harness if needed (not player-facing).
 
 Acceptance:
 
