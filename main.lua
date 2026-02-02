@@ -64,6 +64,7 @@ function gameLoad()
     
     -- Deal initial room
     game.state = State.dealRoomUpToFull(game.state)
+    game.state = Actions.beginTurn(game.state)
     game.state.runState = State.RunState.AWAITING
     
     -- Validate no duplicates at start
@@ -132,15 +133,18 @@ function gameKeypressed(key)
     elseif key == "space" and game.debug then
         -- Auto-play: take first available card (for stress testing)
         autoPlayStep()
+    elseif key == "a" then
+        -- Avoid the current room
+        game.state = Actions.applyAvoid(game.state)
     elseif key == "escape" then
         love.event.quit()
     -- Card actions with 1-4 keys
     elseif key == "1" or key == "2" or key == "3" or key == "4" then
         local index = tonumber(key)
-        -- F+number = flee, number alone = take
+        -- number alone = take
         -- Shift+number = fight barehanded (without weapon)
         if love.keyboard.isDown("f") then
-            game.state = Actions.applyFlee(game.state, index)
+            game.state = Actions.applyAvoid(game.state)
         elseif love.keyboard.isDown("lshift") or love.keyboard.isDown("rshift") then
             -- Fight barehanded: explicitly pass useWeapon = false
             game.state = Actions.applyTake(game.state, index, false)
@@ -160,7 +164,7 @@ function gameMousepressed(x, y, button)
     -- Check if there's a card at this index (room uses sparse array, can't use #)
     if not game.state.room.cards[index] then return end
     
-    -- Left click = take, right click = flee
+    -- Left click = take, right click = avoid
     -- Shift+Left click = fight barehanded (without weapon)
     if button == 1 then
         if love.keyboard.isDown("lshift") or love.keyboard.isDown("rshift") then
@@ -170,7 +174,7 @@ function gameMousepressed(x, y, button)
             game.state = Actions.applyTake(game.state, index)
         end
     elseif button == 2 then
-        game.state = Actions.applyFlee(game.state, index)
+        game.state = Actions.applyAvoid(game.state)
     end
 end
 
@@ -183,6 +187,7 @@ function resetGame()
     
     -- Deal initial room
     game.state = State.dealRoomUpToFull(game.state)
+    game.state = Actions.beginTurn(game.state)
     game.state.runState = State.RunState.AWAITING
     
     game.message = "Game reset! Seed: " .. seed
@@ -202,10 +207,14 @@ function printStateDump()
     local s = game.state
     print("========== STATE DUMP ==========")
     print(string.format("Seed: %s | RunState: %s", s.seed, s.runState))
-    print(string.format("HP: %d/%d | Weapon: %s", s.hp, s.maxHp, 
-        s.weapon and tostring(s.weapon) or "none"))
-    print(string.format("Deck: %d | Discard: %d | Flee: %s", 
-        #s.deck, #s.discard, tostring(s.room.fleeUsed)))
+    local weaponDesc = "none"
+    if s.weapon then
+        local slainCount = s.weapon.slain and #s.weapon.slain or 0
+        weaponDesc = string.format("%d (slain: %d)", s.weapon.value, slainCount)
+    end
+    print(string.format("HP: %d/%d | Weapon: %s", s.hp, s.maxHp, weaponDesc))
+    print(string.format("Deck: %d | Discard: %d | AvoidBlocked: %s", 
+        #s.deck, #s.discard, tostring(s.turnFlags.lastTurnWasAvoid)))
     
     -- Room cards with full IDs (handles sparse array)
     print("Room cards:")
@@ -222,7 +231,7 @@ function printStateDump()
     -- Weapon target constraint
     local lastSlain = s.turnFlags.lastMonsterSlain
     if lastSlain then
-        print(string.format("Weapon can hit: < %d", lastSlain))
+        print(string.format("Weapon can hit: <= %d", lastSlain))
     else
         print("Weapon can hit: any monster")
     end
@@ -239,6 +248,9 @@ function printStateDump()
     local totalCards = #s.deck + #s.discard + State.roomCardCount(s)
     if s.weapon then
         totalCards = totalCards + 1
+        if s.weapon.slain then
+            totalCards = totalCards + #s.weapon.slain
+        end
     end
     print(string.format("Total cards accounted for: %d/44", totalCards))
     
@@ -306,9 +318,9 @@ function runAutomatedDuplicateTest(seed)
         local taken = false
         for i = 1, State.ROOM_SIZE do
             if testState.room.cards[i] then
-                -- Randomly flee or take
-                if not testState.room.fleeUsed and math.random() < 0.1 then
-                    testState = Actions.applyFlee(testState, i)
+                -- Randomly avoid or take
+                if not testState.turnFlags.lastTurnWasAvoid and math.random() < 0.1 then
+                    testState = Actions.applyAvoid(testState)
                 else
                     testState = Actions.applyTake(testState, i)
                 end
@@ -328,4 +340,3 @@ function runAutomatedDuplicateTest(seed)
     
     return not duplicateFound
 end
-

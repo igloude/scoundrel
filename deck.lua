@@ -109,7 +109,7 @@ end
 
 --------------------------------------------------------------------------------
 -- Utility: putCardOnBottom(deck, card)
--- Places a card at the bottom of the deck (for flee mechanic)
+-- Places a card at the bottom of the deck (for avoid mechanic)
 --------------------------------------------------------------------------------
 
 function Deck.putCardOnBottom(deck, card)
@@ -118,4 +118,3 @@ function Deck.putCardOnBottom(deck, card)
 end
 
 return Deck
-

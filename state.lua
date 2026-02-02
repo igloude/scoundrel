@@ -90,8 +90,7 @@ function State.createNewGameState(seed)
         
         -- D.9: Current room
         room = {
-            cards = {},
-            fleeUsed = false
+            cards = {}
         },
         
         -- D.10: Equipped weapon (nil = no weapon)
@@ -109,10 +108,21 @@ function State.createNewGameState(seed)
         -- D.14: Turn flags for rule-specific state
         -- lastMonsterSlain tracks the weapon's "max target" rule:
         -- After slaying a monster with a weapon, you can only use that weapon
-        -- on monsters of LOWER power. Resets when equipping a new weapon.
+        -- on monsters of equal or lower power. Resets when equipping a new weapon.
         turnFlags = {
-            lastMonsterSlain = nil
-        }
+            lastMonsterSlain = nil,
+            potionUsedThisTurn = false,
+            cardsResolvedThisTurn = 0,
+            turnRoomSize = 0,
+            lastTurnWasAvoid = false
+        },
+
+        -- Last resolved card info (for scoring rules)
+        lastResolvedCard = nil,
+        lastResolvedType = nil,
+
+        -- Final score (set on win/lose)
+        score = nil
     }
     
     return state
@@ -336,25 +346,20 @@ function State.canTakeFromRoom(state, index)
 end
 
 --------------------------------------------------------------------------------
--- F.3: canFleeFromRoom(state, index)
--- Returns (bool, reason) - whether player can flee with card at index
+-- F.3: canAvoidRoom(state)
+-- Returns (bool, reason) - whether player can avoid the current room
 --------------------------------------------------------------------------------
 
-function State.canFleeFromRoom(state, index)
+function State.canAvoidRoom(state)
     -- Check game state
     local canAct, reason = State.canAct(state)
     if not canAct then
         return false, reason
     end
     
-    -- Check valid index
-    if not State.isValidRoomIndex(state, index) then
-        return false, "Invalid card index"
-    end
-    
-    -- Check flee already used
-    if state.room.fleeUsed then
-        return false, "Already fled this room"
+    -- Check avoid already used last turn
+    if state.turnFlags.lastTurnWasAvoid then
+        return false, "Cannot avoid two rooms in a row"
     end
     
     return true, nil
@@ -409,6 +414,20 @@ function State.shallowCopyState(state)
         newRoomCards[i] = state.room.cards[i]  -- Can be nil
     end
     
+    local newWeapon = nil
+    if state.weapon then
+        newWeapon = {
+            value = state.weapon.value,
+            card = state.weapon.card,
+            slain = {}
+        }
+        if state.weapon.slain then
+            for i, slainCard in ipairs(state.weapon.slain) do
+                newWeapon.slain[i] = slainCard
+            end
+        end
+    end
+    
     return {
         seed = state.seed,
         hp = state.hp,
@@ -416,16 +435,22 @@ function State.shallowCopyState(state)
         deck = newDeck,
         discard = newDiscard,
         room = {
-            cards = newRoomCards,
-            fleeUsed = state.room.fleeUsed
+            cards = newRoomCards
         },
-        weapon = state.weapon,  -- Weapon is replaced, not mutated
+        weapon = newWeapon,
         runState = state.runState,
         lastLogLine = state.lastLogLine,
         errorMessage = state.errorMessage,
         turnFlags = {
-            lastMonsterSlain = state.turnFlags.lastMonsterSlain
-        }
+            lastMonsterSlain = state.turnFlags.lastMonsterSlain,
+            potionUsedThisTurn = state.turnFlags.potionUsedThisTurn,
+            cardsResolvedThisTurn = state.turnFlags.cardsResolvedThisTurn,
+            turnRoomSize = state.turnFlags.turnRoomSize,
+            lastTurnWasAvoid = state.turnFlags.lastTurnWasAvoid
+        },
+        lastResolvedCard = state.lastResolvedCard,
+        lastResolvedType = state.lastResolvedType,
+        score = state.score
     }
 end
 
@@ -526,6 +551,12 @@ function State.assertNoDuplicateCards(state)
     if state.weapon and state.weapon.card then
         local valid, err = checkCard(state.weapon.card, "weapon")
         if not valid then return false, err end
+        if state.weapon.slain then
+            for i, slainCard in ipairs(state.weapon.slain) do
+                local validSlain, errSlain = checkCard(slainCard, "weapon.slain[" .. i .. "]")
+                if not validSlain then return false, errSlain end
+            end
+        end
     end
     
     return true, nil
@@ -533,14 +564,11 @@ end
 
 --------------------------------------------------------------------------------
 -- I.5: assertHpInRange(state)
--- Debug assertion: ensures HP is within valid range (0 to maxHp)
+-- Debug assertion: ensures HP is within valid range (<= maxHp)
 -- Returns (isValid, errorMessage)
 --------------------------------------------------------------------------------
 
 function State.assertHpInRange(state)
-    if state.hp < 0 then
-        return false, string.format("HP below 0: %d", state.hp)
-    end
     if state.hp > state.maxHp then
         return false, string.format("HP above max: %d > %d", state.hp, state.maxHp)
     end
@@ -554,12 +582,12 @@ end
 --------------------------------------------------------------------------------
 
 function State.assertRoomSizeValid(state)
-    local roomSize = #state.room.cards
-    if roomSize < 0 then
-        return false, string.format("Room has negative cards: %d", roomSize)
+    local roomCount = State.roomCardCount(state)
+    if roomCount < 0 then
+        return false, string.format("Room has negative cards: %d", roomCount)
     end
-    if roomSize > State.ROOM_SIZE then
-        return false, string.format("Room exceeds max size: %d > %d", roomSize, State.ROOM_SIZE)
+    if roomCount > State.ROOM_SIZE then
+        return false, string.format("Room exceeds max size: %d > %d", roomCount, State.ROOM_SIZE)
     end
     return true, nil
 end
@@ -589,4 +617,3 @@ function State.runAllAssertions(state)
 end
 
 return State
-

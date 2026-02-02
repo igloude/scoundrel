@@ -63,11 +63,11 @@ end
 
 --------------------------------------------------------------------------------
 -- B.5: rankToValue(rank)
--- Returns numeric value: A=1, 2-10=pip, J=11, Q=12, K=13
+-- Returns numeric value: A=14, 2-10=pip, J=11, Q=12, K=13
 --------------------------------------------------------------------------------
 
 local RANK_VALUES = {
-    A = 1,
+    A = 14,
     ["2"] = 2,
     ["3"] = 3,
     ["4"] = 4,
@@ -135,4 +135,3 @@ function Cards.cardType(card)
 end
 
 return Cards
-

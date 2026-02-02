@@ -23,19 +23,85 @@ local function runAssertions(state, context)
 end
 
 --------------------------------------------------------------------------------
+-- Turn helpers
+--------------------------------------------------------------------------------
+
+function Actions.beginTurn(state)
+    local newState = State.shallowCopyState(state)
+    newState.turnFlags.cardsResolvedThisTurn = 0
+    newState.turnFlags.potionUsedThisTurn = false
+    newState.turnFlags.turnRoomSize = State.roomCardCount(newState)
+    return newState
+end
+
+local function discardWeaponAndSlain(state)
+    local newState = State.shallowCopyState(state)
+    if not newState.weapon then
+        return newState
+    end
+    if newState.weapon.card then
+        newState = State.pushToDiscard(newState, newState.weapon.card)
+    end
+    if newState.weapon.slain then
+        for _, slainCard in ipairs(newState.weapon.slain) do
+            newState = State.pushToDiscard(newState, slainCard)
+        end
+    end
+    return newState
+end
+
+--------------------------------------------------------------------------------
+-- Endgame scoring
+--------------------------------------------------------------------------------
+
+local function computeLossScore(state)
+    local remainingMonsters = 0
+    for _, card in ipairs(state.deck) do
+        if Cards.isMonster(card) then
+            remainingMonsters = remainingMonsters + Cards.cardValue(card)
+        end
+    end
+    return state.hp - remainingMonsters
+end
+
+local function computeWinScore(state)
+    if state.hp == state.maxHp and state.lastResolvedType == "potion" and state.lastResolvedCard then
+        return state.maxHp + Cards.cardValue(state.lastResolvedCard)
+    end
+    return state.hp
+end
+
+function Actions.updateEndState(state)
+    local newState = State.shallowCopyState(state)
+    if State.isGameOver(newState) then
+        newState.runState = State.RunState.GAME_OVER
+        if newState.score == nil then
+            newState.score = computeLossScore(newState)
+        end
+        if newState.lastLogLine == "" then
+            newState = State.setLog(newState, "Game Over!")
+        end
+        return newState
+    end
+    if State.isVictory(newState) then
+        newState.runState = State.RunState.VICTORY
+        if newState.score == nil then
+            newState.score = computeWinScore(newState)
+        end
+        return newState
+    end
+    return newState
+end
+
+--------------------------------------------------------------------------------
 -- G.5: applyDamage(state, amount)
--- Reduces HP by amount, clamping at 0. Sets GAME_OVER if HP <= 0.
+-- Reduces HP by amount (can go below 0).
 -- Returns newState
 --------------------------------------------------------------------------------
 
 function Actions.applyDamage(state, amount)
     local newState = State.shallowCopyState(state)
-    newState.hp = math.max(0, newState.hp - amount)
-    
-    if newState.hp <= 0 then
-        newState.runState = State.RunState.GAME_OVER
-    end
-    
+    newState.hp = newState.hp - amount
     return newState
 end
 
@@ -65,7 +131,7 @@ end
 
 --------------------------------------------------------------------------------
 -- G.7: equipWeapon(state, weaponCard)
--- Equips a weapon, discarding the old one if present.
+-- Equips a weapon (discarding handled elsewhere).
 -- Clears monster memory when equipping.
 -- Returns newState
 --------------------------------------------------------------------------------
@@ -73,16 +139,11 @@ end
 function Actions.equipWeapon(state, weaponCard)
     local newState = State.shallowCopyState(state)
     
-    -- Discard old weapon if present
-    if newState.weapon then
-        -- Old weapon goes to discard (as a card representation)
-        -- Note: weapon is stored as {value, card} but we just track value for simplicity
-    end
-    
     -- Equip new weapon
     newState.weapon = {
         value = Cards.cardValue(weaponCard),
-        card = weaponCard
+        card = weaponCard,
+        slain = {}
     }
     
     -- Clear monster memory when equipping new weapon
@@ -98,7 +159,7 @@ end
 -- Otherwise: damage = monster value
 -- 
 -- Weapon constraint: After slaying a monster with a weapon, you can only use
--- that weapon on monsters of LOWER power (any suit). The weapon's damage
+-- that weapon on monsters of equal or LOWER power (any suit). The weapon's damage
 -- never changes, only what it can hit.
 -- Returns (damage, canUseWeapon, reason)
 --------------------------------------------------------------------------------
@@ -112,13 +173,13 @@ function Actions.computeMonsterDamage(state, monsterCard, useWeapon)
     end
     
     -- Check weapon's "max target" rule:
-    -- After slaying a monster, weapon can only be used on monsters of LOWER power
+    -- After slaying a monster, weapon can only be used on monsters of equal or lower power
     local lastSlain = state.turnFlags.lastMonsterSlain
     
-    if lastSlain and monsterValue >= lastSlain then
-        -- Cannot use weapon on monster with power >= last slain monster
+    if lastSlain and monsterValue > lastSlain then
+        -- Cannot use weapon on monster with power > last slain monster
         return monsterValue, false, string.format(
-            "Weapon can only hit monsters < %d (last slain: %d)", lastSlain, lastSlain)
+            "Weapon can only hit monsters <= %d (last slain: %d)", lastSlain, lastSlain)
     end
     
     -- Weapon applies: damage reduced
@@ -151,17 +212,25 @@ function Actions.resolveTakeMonster(state, card, index, useWeapon)
         damage = Cards.cardValue(card)
     end
     
-    -- Remove card from room and discard
+    -- Remove card from room
     local newState, removedCard = State.removeRoomCard(state, index)
-    newState = State.pushToDiscard(newState, removedCard)
     
     -- Apply damage
     newState = Actions.applyDamage(newState, damage)
     
     -- Update weapon's "max target" if weapon was used
-    -- After slaying a monster with weapon, can only hit monsters of lower power
+    -- After slaying a monster with weapon, can only hit monsters of equal or lower power
     if weaponUsed then
         newState.turnFlags.lastMonsterSlain = Cards.cardValue(card)
+        -- Stack slain monster on the weapon (not discarded)
+        if newState.weapon then
+            table.insert(newState.weapon.slain, removedCard)
+        else
+            newState = State.pushToDiscard(newState, removedCard)
+        end
+    else
+        -- Barehanded: discard the monster
+        newState = State.pushToDiscard(newState, removedCard)
     end
     
     -- Log the action with clear fight style indication
@@ -188,10 +257,8 @@ function Actions.resolveTakeWeapon(state, card, index)
     -- Remove card from room
     local newState, removedCard = State.removeRoomCard(state, index)
     
-    -- Discard old weapon if present
-    if newState.weapon and newState.weapon.card then
-        newState = State.pushToDiscard(newState, newState.weapon.card)
-    end
+    -- Discard old weapon and its slain stack if present
+    newState = discardWeaponAndSlain(newState)
     
     -- Equip new weapon
     newState = Actions.equipWeapon(newState, removedCard)
@@ -218,8 +285,17 @@ function Actions.resolveTakePotion(state, card, index)
     local newState, removedCard = State.removeRoomCard(state, index)
     newState = State.pushToDiscard(newState, removedCard)
     
-    -- Apply healing
+    if newState.turnFlags.potionUsedThisTurn then
+        -- Potion already used this turn: no healing
+        local logMsg = string.format("Drank %s, no healing (already used potion this turn)", 
+            Cards.cardToString(card))
+        newState = State.setLog(newState, logMsg)
+        return newState
+    end
+    
+    -- Apply healing (first potion this turn)
     newState = Actions.applyHeal(newState, healAmount)
+    newState.turnFlags.potionUsedThisTurn = true
     
     -- Log the action
     local actualHeal = newState.hp - oldHp
@@ -242,23 +318,22 @@ function Actions.afterSuccessfulTake(state)
     -- Always work with a copy to avoid mutation issues
     local newState = State.shallowCopyState(state)
     
-    -- Check if player died
-    if newState.hp <= 0 then
-        newState.runState = State.RunState.GAME_OVER
+    -- Check for game end (loss)
+    newState = Actions.updateEndState(newState)
+    if newState.runState == State.RunState.GAME_OVER then
         return newState
     end
     
     local roomCount = State.roomCardCount(newState)
+    local turnRoomSize = newState.turnFlags.turnRoomSize
     
-    -- Room transition: 1 card left and deck has cards
-    if roomCount == 1 and not State.deckIsEmpty(newState) then
+    -- Room transition for full rooms: resolve exactly 3, carry 1
+    if turnRoomSize == State.ROOM_SIZE and newState.turnFlags.cardsResolvedThisTurn >= 3 and roomCount >= 1 then
         -- Find the remaining card's position and get reference
         local carryOverCard = nil
-        local carryOverIndex = nil
         for i = 1, State.ROOM_SIZE do
             if newState.room.cards[i] then
                 carryOverCard = newState.room.cards[i]
-                carryOverIndex = i
                 break
             end
         end
@@ -275,19 +350,23 @@ function Actions.afterSuccessfulTake(state)
             end
         end
         
-        -- Clear the old position first, then set position 1
-        -- This ensures we don't have the card in two places
+        -- Clear the old positions first, then set position 1
         for i = 1, State.ROOM_SIZE do
             newState.room.cards[i] = nil
         end
         newState.room.cards[1] = carryOverCard
-        newState.room.fleeUsed = false
+        
+        -- End the turn (non-avoid), then deal for next turn
+        newState.turnFlags.lastTurnWasAvoid = false
         
         -- Debug assertion: verify clean state before dealing
         runAssertions(newState, "after carry-over setup, before dealing")
         
-        -- Draw 3 new cards to fill positions 2, 3, 4
+        -- Draw up to full (3 new cards if available)
         newState = State.dealRoomUpToFull(newState)
+        
+        -- Reset per-turn counters for the new room
+        newState = Actions.beginTurn(newState)
         
         -- Debug assertion: verify no duplicates after dealing
         runAssertions(newState, "after carry-over dealing")
@@ -297,13 +376,13 @@ function Actions.afterSuccessfulTake(state)
     
     -- Victory: room empty AND deck empty
     if roomCount == 0 and State.deckIsEmpty(newState) then
-        newState.runState = State.RunState.VICTORY
-        newState = State.setLog(newState, "Victory! You survived the dungeon!")
+        newState.turnFlags.lastTurnWasAvoid = false
+        newState = Actions.updateEndState(newState)
+        if newState.runState == State.RunState.VICTORY then
+            newState = State.setLog(newState, "Victory! You survived the dungeon!")
+        end
         return newState
     end
-    
-    -- Edge case: 1 card left but deck is empty - player must take it to win
-    -- (No transition needed, player continues taking from room)
     
     return newState
 end
@@ -349,6 +428,11 @@ function Actions.applyTake(state, index, useWeapon)
     elseif cardType == "potion" then
         newState = Actions.resolveTakePotion(newState, card, index)
     end
+
+    -- Track last resolved card for scoring
+    newState.lastResolvedCard = card
+    newState.lastResolvedType = cardType
+    newState.turnFlags.cardsResolvedThisTurn = newState.turnFlags.cardsResolvedThisTurn + 1
     
     -- Post-take processing
     newState = Actions.afterSuccessfulTake(newState)
@@ -360,128 +444,55 @@ function Actions.applyTake(state, index, useWeapon)
 end
 
 --------------------------------------------------------------------------------
--- H.2: resolveFleeCard(state, card, index)
--- Places the chosen card at the bottom of the deck.
+-- H.1: applyAvoid(state)
+-- Single entry point for avoiding the current room.
+-- Moves all face-up cards to the bottom of the deck; cannot be used twice in a row.
 -- Returns newState
 --------------------------------------------------------------------------------
 
-function Actions.resolveFleeCard(state, card, index)
+function Actions.applyAvoid(state)
     local Deck = require("deck")
     
-    -- Remove card from room (don't discard it)
-    local newState, removedCard = State.removeRoomCard(state, index)
-    
-    -- Debug: verify card was actually removed from room
-    if Actions.DEBUG_ASSERTIONS then
-        for i = 1, State.ROOM_SIZE do
-            local roomCard = newState.room.cards[i]
-            if roomCard and removedCard and roomCard.id == removedCard.id then
-                print("=== FLEE BUG: Card not properly removed from room! ===")
-                print("Card: " .. Cards.cardToString(removedCard) .. " id=" .. removedCard.id)
-                print("Still at room slot: " .. i)
-                print("======================================================")
-            end
-        end
-    end
-    
-    -- Put the card at the bottom of the deck
-    Deck.putCardOnBottom(newState.deck, removedCard)
-    
-    -- Debug: verify card is now in deck and not in room
-    runAssertions(newState, "after resolveFleeCard")
-    
-    return newState
-end
-
---------------------------------------------------------------------------------
--- H.3: applyFleePenalty(state)
--- Applies any penalty for fleeing (none in base rules).
--- Returns newState
---------------------------------------------------------------------------------
-
-function Actions.applyFleePenalty(state)
-    -- No penalty in base rules
-    return state
-end
-
---------------------------------------------------------------------------------
--- H.4: afterFlee(state)
--- Called after fleeing. Discards remaining room cards and refills room.
--- Returns newState
---------------------------------------------------------------------------------
-
-function Actions.afterFlee(state)
-    local newState = State.shallowCopyState(state)
-    
-    -- Discard all remaining room cards (handles sparse array)
-    for i = 1, State.ROOM_SIZE do
-        local card = newState.room.cards[i]
-        if card then
-            table.insert(newState.discard, card)
-            newState.room.cards[i] = nil
-        end
-    end
-    
-    -- Mark flee as used (already done in applyFlee, but ensure it)
-    newState.room.fleeUsed = true
-    
-    -- Check if deck is empty -> victory (room is now empty)
-    if State.deckIsEmpty(newState) then
-        newState.runState = State.RunState.VICTORY
-        newState = State.setLog(newState, "Victory! You survived the dungeon!")
-        return newState
-    end
-    
-    -- Deal new room (flee resets the room)
-    newState.room.fleeUsed = false  -- Reset for the new room
-    newState = State.dealRoomUpToFull(newState)
-    
-    return newState
-end
-
---------------------------------------------------------------------------------
--- H.1: applyFlee(state, index)
--- Single entry point for fleeing from a card.
--- The chosen card goes to the bottom of the deck; others are discarded.
--- Returns newState
---------------------------------------------------------------------------------
-
-function Actions.applyFlee(state, index)
     -- Validate
-    local canFlee, reason = State.canFleeFromRoom(state, index)
-    if not canFlee then
+    local canAvoid, reason = State.canAvoidRoom(state)
+    if not canAvoid then
         return State.setError(state, reason)
     end
     
     -- Clear any previous error
     local newState = State.clearError(state)
-    
-    -- Get the card we're fleeing from
-    local card = newState.room.cards[index]
-    
-    -- Mark flee as used before we modify the room
     newState = State.shallowCopyState(newState)
-    newState.room.fleeUsed = true
     
-    -- Put the chosen card at the bottom of the deck
-    newState = Actions.resolveFleeCard(newState, card, index)
+    -- Collect room cards in slot order
+    local roomCards = {}
+    for i = 1, State.ROOM_SIZE do
+        local card = newState.room.cards[i]
+        if card then
+            table.insert(roomCards, card)
+        end
+        newState.room.cards[i] = nil
+    end
     
-    -- Apply any flee penalty
-    newState = Actions.applyFleePenalty(newState)
+    -- Put cards on bottom of deck in slot order (preserve left-to-right order)
+    for i = #roomCards, 1, -1 do
+        Deck.putCardOnBottom(newState.deck, roomCards[i])
+    end
+    
+    -- Mark avoid used this turn
+    newState.turnFlags.lastTurnWasAvoid = true
     
     -- Log the action
-    local logMsg = string.format("Fled from %s (sent to bottom of deck)", 
-        Cards.cardToString(card))
+    local logMsg = string.format("Avoided the room (sent %d cards to bottom of deck)", #roomCards)
     newState = State.setLog(newState, logMsg)
     
-    -- Post-flee processing (discard remaining cards, deal new room)
-    newState = Actions.afterFlee(newState)
+    -- Deal new room and start a new turn
+    newState = State.dealRoomUpToFull(newState)
+    newState = Actions.beginTurn(newState)
     
     -- Run assertions to catch any duplicate card bugs
-    runAssertions(newState, "after applyFlee index=" .. index)
+    runAssertions(newState, "after applyAvoid")
     
     return newState
 end
 
 return Actions
-

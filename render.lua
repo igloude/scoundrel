@@ -146,7 +146,7 @@ function Render.drawRoom(state)
     
     -- Room label
     love.graphics.setColor(Render.COLORS.textDim)
-    love.graphics.print("The Room (press 1-4 to take, F+1-4 to flee)", 20, Render.ROOM_Y - 25)
+    love.graphics.print("The Room (press 1-4 to take, A to avoid room)", 20, Render.ROOM_Y - 25)
 end
 
 --------------------------------------------------------------------------------
@@ -165,7 +165,7 @@ function Render.drawHud(state)
     love.graphics.rectangle("fill", hpBarX, hpBarY, hpBarW, hpBarH, 4, 4)
     
     -- HP bar fill
-    local hpPercent = state.hp / state.maxHp
+    local hpPercent = math.max(0, state.hp) / state.maxHp
     local hpColor = hpPercent > 0.3 and Render.COLORS.hpFull or Render.COLORS.hpLow
     love.graphics.setColor(hpColor)
     love.graphics.rectangle("fill", hpBarX, hpBarY, hpBarW * hpPercent, hpBarH, 4, 4)
@@ -189,14 +189,14 @@ function Render.drawHud(state)
     love.graphics.print(string.format("Deck: %d", #state.deck), 400, hpBarY + 4)
     love.graphics.print(string.format("Discard: %d", #state.discard), 500, hpBarY + 4)
     
-    -- Flee status
-    local fleeX = 620
-    if state.room.fleeUsed then
+    -- Avoid status
+    local avoidX = 620
+    if state.turnFlags.lastTurnWasAvoid then
         love.graphics.setColor(0.5, 0.3, 0.3, 1)
-        love.graphics.print("Flee: used", fleeX, hpBarY + 4)
+        love.graphics.print("Avoid: blocked", avoidX, hpBarY + 4)
     else
         love.graphics.setColor(0.3, 0.5, 0.3, 1)
-        love.graphics.print("Flee: ready", fleeX, hpBarY + 4)
+        love.graphics.print("Avoid: ready", avoidX, hpBarY + 4)
     end
     
     -- Second row: Weapon's max target (if weapon equipped and has been used)
@@ -204,7 +204,7 @@ function Render.drawHud(state)
         love.graphics.setColor(Render.COLORS.textDim)
         local lastSlain = state.turnFlags.lastMonsterSlain
         if lastSlain then
-            love.graphics.print(string.format("Weapon can hit: < %d", lastSlain), 20, hpBarY + 28)
+            love.graphics.print(string.format("Weapon can hit: <= %d", lastSlain), 20, hpBarY + 28)
         else
             love.graphics.print("Weapon can hit: any monster", 20, hpBarY + 28)
         end
@@ -250,8 +250,12 @@ function Render.drawEndScreen(state)
         love.graphics.print("VICTORY!", 320, 250)
         love.graphics.setColor(Render.COLORS.text)
         love.graphics.print("You survived the dungeon!", 280, 290)
+        if state.score ~= nil then
+            love.graphics.setColor(Render.COLORS.text)
+            love.graphics.print(string.format("Score: %d", state.score), 330, 320)
+        end
         love.graphics.setColor(Render.COLORS.textDim)
-        love.graphics.print("Press R to play again", 300, 330)
+        love.graphics.print("Press R to play again", 300, 350)
         
     elseif state.runState == State.RunState.GAME_OVER then
         -- Game over overlay
@@ -262,8 +266,12 @@ function Render.drawEndScreen(state)
         love.graphics.print("GAME OVER", 310, 250)
         love.graphics.setColor(Render.COLORS.text)
         love.graphics.print("The dungeon claimed another soul...", 250, 290)
+        if state.score ~= nil then
+            love.graphics.setColor(Render.COLORS.text)
+            love.graphics.print(string.format("Score: %d", state.score), 330, 320)
+        end
         love.graphics.setColor(Render.COLORS.textDim)
-        love.graphics.print("Press R to try again", 305, 330)
+        love.graphics.print("Press R to try again", 305, 350)
     end
 end
 
@@ -274,7 +282,7 @@ end
 
 function Render.drawControls()
     love.graphics.setColor(Render.COLORS.textDim)
-    love.graphics.print("1-4 or Click=Take  |  Shift+Click=Barehanded  |  F+1-4 or Right-Click=Flee  |  R=Reset", 20, 570)
+    love.graphics.print("1-4 or Click=Take  |  Shift+Click=Barehanded  |  Right-Click or A=Avoid Room  |  R=Reset", 20, 570)
 end
 
 --------------------------------------------------------------------------------
@@ -304,7 +312,7 @@ function Render.drawDebug(state, game)
     if not hasCards then roomCardsStr = "(empty)" end
     
     local lastSlainStr = state.turnFlags.lastMonsterSlain 
-        and string.format("< %d", state.turnFlags.lastMonsterSlain) 
+        and string.format("<= %d", state.turnFlags.lastMonsterSlain) 
         or "any"
     local debugInfo = string.format(
         "DEBUG: Seed=%s Fixed=%s RunState=%s\n" ..
@@ -349,4 +357,3 @@ function Render.indexFromMouseClick(x, y)
 end
 
 return Render
-
