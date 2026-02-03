@@ -1,4 +1,4 @@
-# Digital Scoundrel — Game Development Document (Human-Readable)
+# Scoundrel Solitaire
 
 A faithful digital adaptation of the solo card game **Scoundrel** (Zach Gage & Kurt Bieg).  
 Goal: implement the complete ruleset accurately with a minimal, clear UI. Polish is secondary to correctness.
