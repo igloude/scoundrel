@@ -35,7 +35,7 @@ function ActionBar.draw(rect, state)
     
     love.graphics.setFont(Theme.fonts.sm)
     love.graphics.setColor(Theme.colors.textDim)
-    love.graphics.print("Select a card to act", btnRect.x + btnRect.w + 18, btnRect.y + 10)
+    love.graphics.print("Monsters: Left=Weapon (if allowed)  Right=Barehanded", btnRect.x + btnRect.w + 18, btnRect.y + 10)
     
     if not avoid.ok and avoid.reason then
         love.graphics.setFont(Theme.fonts.xs)

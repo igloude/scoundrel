@@ -68,7 +68,7 @@ function ScreenMain.draw(state, toastState)
     
     love.graphics.clear(Theme.colors.bg)
     
-    drawPanel(hud, "HUD")
+    drawPanel(hud, nil)
     drawPanel(room, "ROOM")
     -- Action bar is drawn by component
     
@@ -97,7 +97,7 @@ function ScreenMain.draw(state, toastState)
     local actionLayout = ActionBar.draw(action, state)
     
     -- Log region
-    LogPanel.draw(log, state.ui.log)
+    local logLayout = LogPanel.draw(log, state.ui.log, state.ui.logScroll)
     if toastState then
         ToastManager.draw(toastState, log)
     end
@@ -118,7 +118,8 @@ function ScreenMain.draw(state, toastState)
         actionLayout = actionLayout,
         choiceLayout = choiceLayout,
         choiceRect = choiceRect,
-        overlayLayout = overlayLayout
+        overlayLayout = overlayLayout,
+        logLayout = logLayout
     }
 end
 

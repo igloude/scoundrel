@@ -24,6 +24,7 @@ local function createUiState()
         hoverIndex = nil,
         visualStates = {},
         log = {"UI ready"},
+        logScroll = 0,
         hpDisplay = 20,
         reducedMotion = false,
         highContrast = false,
@@ -37,6 +38,7 @@ local function pushLog(text)
     if #app.ui.log > 20 then
         table.remove(app.ui.log)
     end
+    app.ui.logScroll = 0
 end
 
 local function pushToast(text)
@@ -246,6 +248,13 @@ function love.mousepressed(x, y, button)
         end
     end
 
+    if app.layout and app.layout.logLayout then
+        local logRect = app.layout.log
+        if x >= logRect.x and x <= logRect.x + logRect.w and y >= logRect.y and y <= logRect.y + logRect.h then
+            return
+        end
+    end
+
     if app.layout and app.layout.actionLayout then
         local hit = ActionBar.hitTest(x, y, app.layout.actionLayout)
         if hit == "avoid" then
@@ -293,6 +302,16 @@ function love.mousepressed(x, y, button)
     else
         clearSelection()
         pushLog("Selection cleared")
+    end
+end
+
+function love.wheelmoved(x, y)
+    if not app.layout or not app.layout.logLayout then return end
+    local logRect = app.layout.log
+    local mx, my = love.mouse.getPosition()
+    if mx >= logRect.x and mx <= logRect.x + logRect.w and my >= logRect.y and my <= logRect.y + logRect.h then
+        local maxScroll = app.layout.logLayout.maxScroll or 0
+        app.ui.logScroll = math.max(0, math.min(maxScroll, (app.ui.logScroll or 0) - y))
     end
 end
 
