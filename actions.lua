@@ -355,6 +355,7 @@ function Actions.afterSuccessfulTake(state)
             newState.room.cards[i] = nil
         end
         newState.room.cards[1] = carryOverCard
+        newState.turnFlags.carryOverCardId = carryOverCard and carryOverCard.id or nil
         
         -- End the turn (non-avoid), then deal for next turn
         newState.turnFlags.lastTurnWasAvoid = false
@@ -433,6 +434,9 @@ function Actions.applyTake(state, index, useWeapon)
     newState.lastResolvedCard = card
     newState.lastResolvedType = cardType
     newState.turnFlags.cardsResolvedThisTurn = newState.turnFlags.cardsResolvedThisTurn + 1
+    if newState.turnFlags.carryOverCardId == card.id then
+        newState.turnFlags.carryOverCardId = nil
+    end
     
     -- Post-take processing
     newState = Actions.afterSuccessfulTake(newState)
@@ -480,6 +484,7 @@ function Actions.applyAvoid(state)
     
     -- Mark avoid used this turn
     newState.turnFlags.lastTurnWasAvoid = true
+    newState.turnFlags.carryOverCardId = nil
     
     -- Log the action
     local logMsg = string.format("Avoided the room (sent %d cards to bottom of deck)", #roomCards)

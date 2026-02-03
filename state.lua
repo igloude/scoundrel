@@ -114,7 +114,8 @@ function State.createNewGameState(seed)
             potionUsedThisTurn = false,
             cardsResolvedThisTurn = 0,
             turnRoomSize = 0,
-            lastTurnWasAvoid = false
+            lastTurnWasAvoid = false,
+            carryOverCardId = nil
         },
 
         -- Last resolved card info (for scoring rules)
@@ -446,7 +447,8 @@ function State.shallowCopyState(state)
             potionUsedThisTurn = state.turnFlags.potionUsedThisTurn,
             cardsResolvedThisTurn = state.turnFlags.cardsResolvedThisTurn,
             turnRoomSize = state.turnFlags.turnRoomSize,
-            lastTurnWasAvoid = state.turnFlags.lastTurnWasAvoid
+            lastTurnWasAvoid = state.turnFlags.lastTurnWasAvoid,
+            carryOverCardId = state.turnFlags.carryOverCardId
         },
         lastResolvedCard = state.lastResolvedCard,
         lastResolvedType = state.lastResolvedType,

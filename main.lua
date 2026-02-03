@@ -1,342 +1,351 @@
--- Scoundrel - A digital adaptation of the solo card game
--- main.lua - Love2D entry point
+-- Scoundrel - Love2D entry point with UI layer
 
 ---@diagnostic disable: lowercase-global, undefined-global
 
--- Modules
 local Cards = require("cards")
-local Deck = require("deck")
 local State = require("state")
 local Actions = require("actions")
-local Render = require("render")
 
--- Game state holder (initialized in love.load)
-local game = {}
+local Theme = require("ui.theme")
+local ScreenMain = require("ui.screen_main")
+local ChoicePanel = require("ui.components.choice_panel")
+local ActionBar = require("ui.components.action_bar")
+local ToastManager = require("ui.components.toast_manager")
+local RoomView = require("ui.components.room_view")
+local Keybindings = require("ui.keybindings")
+local RunEndOverlay = require("ui.components.run_end_overlay")
 
--- Forward declarations for game functions
-local function gameLoad() end
-local function gameUpdate(dt) end
-local function gameDraw() end
-local function gameKeypressed(key) end
-local function gameMousepressed(x, y, button) end
-local function resetGame() end
+local app = {}
 
---------------------------------------------------------------------------------
--- Love2D Callbacks
---------------------------------------------------------------------------------
+local function createUiState()
+    return {
+        selectedIndex = nil,
+        focusedIndex = 1,
+        hoverIndex = nil,
+        visualStates = {},
+        log = {"UI ready"},
+        hpDisplay = 20,
+        reducedMotion = false,
+        highContrast = false,
+        cardAnims = {},
+        cardScale = 1
+    }
+end
+
+local function pushLog(text)
+    table.insert(app.ui.log, 1, text)
+    if #app.ui.log > 20 then
+        table.remove(app.ui.log)
+    end
+end
+
+local function pushToast(text)
+    ToastManager.push(app.toasts, text, 2.4)
+end
+
+local function dispatch(eventName, payload)
+    local msg = eventName
+    if payload and payload.cardId then
+        msg = string.format("%s (card %d)", eventName, payload.cardId)
+    end
+    print(msg)
+end
+
+local function newRun()
+    local seed = os.time()
+    app.game = {}
+    app.game.state = State.createNewGameState(seed)
+    app.game.state = State.dealRoomUpToFull(app.game.state)
+    app.game.state = Actions.beginTurn(app.game.state)
+    app.game.state.runState = State.RunState.AWAITING
+    app.ui = createUiState()
+    app.ui.hpDisplay = app.game.state.hp
+    pushLog("New run started")
+end
+
+local function buildViewState(gameState, ui)
+    local roomCards = {}
+    local slotByIndex = {}
+    for slot = 1, State.ROOM_SIZE do
+        local card = gameState.room.cards[slot]
+        if card then
+            local cardType = Cards.cardType(card)
+            local cardValue = Cards.cardValue(card)
+            table.insert(roomCards, {
+                id = card.id,
+                suit = card.suit,
+                rank = card.rank,
+                type = cardType,
+                value = cardValue,
+                carriedFromLastTurn = (gameState.turnFlags.carryOverCardId == card.id)
+            })
+            slotByIndex[#roomCards] = slot
+        end
+    end
+
+    local lastResolvedCard = nil
+    if gameState.lastResolvedCard then
+        lastResolvedCard = {
+            type = Cards.cardType(gameState.lastResolvedCard),
+            value = Cards.cardValue(gameState.lastResolvedCard)
+        }
+    end
+
+    local remainingMonsterPenalty = 0
+    for _, card in ipairs(gameState.deck) do
+        if Cards.isMonster(card) then
+            remainingMonsterPenalty = remainingMonsterPenalty + Cards.cardValue(card)
+        end
+    end
+
+    local status = nil
+    if gameState.runState == State.RunState.VICTORY then
+        status = "won"
+    elseif gameState.runState == State.RunState.GAME_OVER then
+        status = "lost"
+    end
+
+    return {
+        player = {
+            hp = gameState.hp,
+            hpMax = gameState.maxHp,
+            weapon = gameState.weapon and {
+                value = gameState.weapon.value,
+                lastSlainMonsterValue = gameState.turnFlags.lastMonsterSlain
+            } or nil
+        },
+        turn = {
+            potionUsedThisTurn = gameState.turnFlags.potionUsedThisTurn,
+            previousTurnAvoided = gameState.turnFlags.lastTurnWasAvoid
+        },
+        room = {
+            cards = roomCards,
+            slotByIndex = slotByIndex
+        },
+        config = {
+            roomSize = State.ROOM_SIZE
+        },
+        dungeonCount = #gameState.deck,
+        discardCount = #gameState.discard,
+        status = status,
+        lastResolvedCard = lastResolvedCard,
+        remainingMonsterPenalty = remainingMonsterPenalty,
+        ui = ui
+    }
+end
+
+local function clearSelection()
+    app.ui.selectedIndex = nil
+end
+
+local function cardSummary(card)
+    local suitSymbol = ({ spades = "♠", clubs = "♣", hearts = "♥", diamonds = "♦" })
+    local sym = suitSymbol[card.suit] or "?"
+    return string.format("%s%s (%s)", card.rank, sym, string.upper(card.type))
+end
+
+local function syncGameLog(gameState)
+    if gameState.lastLogLine and gameState.lastLogLine ~= "" and gameState.lastLogLine ~= app.ui.lastGameLog then
+        app.ui.lastGameLog = gameState.lastLogLine
+        pushLog(gameState.lastLogLine)
+    end
+    if gameState.errorMessage and gameState.errorMessage ~= "" then
+        pushLog("Action blocked: " .. gameState.errorMessage)
+        pushToast(gameState.errorMessage)
+        gameState = State.clearError(gameState)
+    end
+    return gameState
+end
+
+local function resolveCard(viewState, mode, canWeapon)
+    local selected = app.ui.selectedIndex and viewState.room.cards[app.ui.selectedIndex] or nil
+    if not selected then return end
+    local slot = viewState.room.slotByIndex[app.ui.selectedIndex]
+    if not slot then return end
+
+    if selected.type == "monster" then
+        if mode == "barehanded" then
+            pushLog("Fight barehanded: " .. cardSummary(selected))
+            app.game.state = Actions.applyTake(app.game.state, slot, false)
+        else
+            if canWeapon and canWeapon.ok then
+                pushLog("Fight with weapon: " .. cardSummary(selected))
+                app.game.state = Actions.applyTake(app.game.state, slot, true)
+            else
+                local reason = (canWeapon and canWeapon.reason) or "Weapon fight blocked"
+                pushLog("Attempted weapon fight: blocked (" .. reason .. ")")
+                pushToast(reason)
+                return
+            end
+        end
+        RoomView.startResolve(app.ui, selected.id)
+        dispatch("onResolveCard", { cardId = selected.id, kind = "monster", mode = mode })
+    elseif selected.type == "potion" then
+        pushLog("Use potion: " .. cardSummary(selected))
+        app.game.state = Actions.applyTake(app.game.state, slot)
+        RoomView.startResolve(app.ui, selected.id)
+        dispatch("onResolveCard", { cardId = selected.id, kind = "potion" })
+    elseif selected.type == "weapon" then
+        pushLog("Equip weapon: " .. cardSummary(selected))
+        app.game.state = Actions.applyTake(app.game.state, slot)
+        RoomView.startResolve(app.ui, selected.id)
+        dispatch("onResolveCard", { cardId = selected.id, kind = "weapon" })
+    end
+
+    app.game.state = syncGameLog(app.game.state)
+    if not app.game.state.errorMessage then
+        clearSelection()
+    end
+end
 
 function love.load()
-    game = {}
-    gameLoad()
+    Theme.init()
+    app.toasts = ToastManager.new()
+    newRun()
 end
 
 function love.update(dt)
-    gameUpdate(dt)
+    local viewState = buildViewState(app.game.state, app.ui)
+
+    local mx, my = love.mouse.getPosition()
+    local hoverIndex = ScreenMain.hitTestRoom(viewState, mx, my)
+    app.ui.hoverIndex = hoverIndex
+    app.ui.visualStates = ScreenMain.computeVisualStates(viewState, hoverIndex)
+    ToastManager.update(app.toasts, dt)
+
+    if app.ui.reducedMotion then
+        app.ui.hpDisplay = app.game.state.hp
+    else
+        local target = app.game.state.hp
+        local current = app.ui.hpDisplay
+        app.ui.hpDisplay = current + (target - current) * math.min(1, dt * 10)
+    end
+
+    local completed = RoomView.update(viewState.room.cards, app.ui.visualStates, dt, app.ui)
+    for _, cardId in ipairs(completed) do
+        pushLog("Resolve animation complete (card " .. cardId .. ")")
+        dispatch("onResolveAnimationComplete", { cardId = cardId })
+    end
 end
 
 function love.draw()
-    gameDraw()
-end
-
-function love.keypressed(key)
-    gameKeypressed(key)
+    local viewState = buildViewState(app.game.state, app.ui)
+    app.layout = ScreenMain.draw(viewState, app.toasts)
 end
 
 function love.mousepressed(x, y, button)
-    gameMousepressed(x, y, button)
-end
+    local viewState = buildViewState(app.game.state, app.ui)
 
---------------------------------------------------------------------------------
--- Game Functions
---------------------------------------------------------------------------------
-
-function gameLoad()
-    -- Meta state (persists across resets)
-    game.debug = false
-    game.useFixedSeed = false
-    game.fixedSeed = 12345
-    
-    -- Determine seed
-    local seed = game.useFixedSeed and game.fixedSeed or os.time()
-    
-    -- Create game state using State module
-    game.state = State.createNewGameState(seed)
-    
-    -- Deal initial room
-    game.state = State.dealRoomUpToFull(game.state)
-    game.state = Actions.beginTurn(game.state)
-    game.state.runState = State.RunState.AWAITING
-    
-    -- Validate no duplicates at start
-    local valid, err = State.assertNoDuplicateCards(game.state)
-    if not valid then
-        print("=== DUPLICATE CARD BUG AT START ===")
-        print(err)
-        print("====================================")
-    end
-    
-    -- UI message
-    game.message = "Scoundrel - Press R to reset, D to toggle debug"
-end
-
-function gameUpdate(dt)
-    -- Pass-through to game update logic
-    -- (No-op for now)
-end
-
-function gameDraw()
-    -- Clear with background color
-    love.graphics.clear(Render.COLORS.background)
-    
-    if not game.state then return end
-    
-    -- Draw all UI elements using Render module
-    Render.drawHud(game.state)
-    Render.drawRoom(game.state)
-    Render.drawLog(game.state)
-    Render.drawError(game.state)
-    Render.drawControls()
-    
-    -- Debug overlay
-    if game.debug then
-        Render.drawDebug(game.state, game)
-    end
-    
-    -- End screen overlay (drawn last, on top)
-    Render.drawEndScreen(game.state)
-end
-
-function gameKeypressed(key)
-    if key == "r" then
-        -- Reset the run to fresh game state
-        resetGame()
-    elseif key == "d" then
-        -- Toggle debug flag
-        game.debug = not game.debug
-    elseif key == "s" and game.debug then
-        -- Toggle fixed seed (only in debug mode)
-        game.useFixedSeed = not game.useFixedSeed
-        resetGame()
-    elseif key == "p" and game.debug then
-        -- Print state dump to console
-        printStateDump()
-    elseif key == "t" and game.debug then
-        -- Run automated duplicate test
-        local allPassed = true
-        for i = 1, 10 do
-            local passed = runAutomatedDuplicateTest(os.time() + i * 12345)
-            allPassed = allPassed and passed
-        end
-        print(allPassed and "=== ALL TESTS PASSED ===" or "=== SOME TESTS FAILED ===")
-        -- Reset to current game
-        resetGame()
-    elseif key == "space" and game.debug then
-        -- Auto-play: take first available card (for stress testing)
-        autoPlayStep()
-    elseif key == "a" then
-        -- Avoid the current room
-        game.state = Actions.applyAvoid(game.state)
-    elseif key == "escape" then
-        love.event.quit()
-    -- Card actions with 1-4 keys
-    elseif key == "1" or key == "2" or key == "3" or key == "4" then
-        local index = tonumber(key)
-        -- number alone = take
-        -- Shift+number = fight barehanded (without weapon)
-        if love.keyboard.isDown("f") then
-            game.state = Actions.applyAvoid(game.state)
-        elseif love.keyboard.isDown("lshift") or love.keyboard.isDown("rshift") then
-            -- Fight barehanded: explicitly pass useWeapon = false
-            game.state = Actions.applyTake(game.state, index, false)
-        else
-            game.state = Actions.applyTake(game.state, index)
-        end
-    end
-end
-
-function gameMousepressed(x, y, button)
-    if not game.state then return end
-    
-    -- Check if click is on a room card
-    local index = Render.indexFromMouseClick(x, y)
-    if not index then return end
-    
-    -- Check if there's a card at this index (room uses sparse array, can't use #)
-    if not game.state.room.cards[index] then return end
-    
-    -- Left click = take, right click = avoid
-    -- Shift+Left click = fight barehanded (without weapon)
-    if button == 1 then
-        if love.keyboard.isDown("lshift") or love.keyboard.isDown("rshift") then
-            -- Fight barehanded: explicitly pass useWeapon = false
-            game.state = Actions.applyTake(game.state, index, false)
-        else
-            game.state = Actions.applyTake(game.state, index)
-        end
-    elseif button == 2 then
-        game.state = Actions.applyAvoid(game.state)
-    end
-end
-
-function resetGame()
-    -- Determine seed
-    local seed = game.useFixedSeed and game.fixedSeed or os.time()
-    
-    -- Create fresh game state
-    game.state = State.createNewGameState(seed)
-    
-    -- Deal initial room
-    game.state = State.dealRoomUpToFull(game.state)
-    game.state = Actions.beginTurn(game.state)
-    game.state.runState = State.RunState.AWAITING
-    
-    game.message = "Game reset! Seed: " .. seed
-end
-
---------------------------------------------------------------------------------
--- Debug Utilities
---------------------------------------------------------------------------------
-
--- L.1: Print concise state dump to console
-function printStateDump()
-    if not game.state then 
-        print("No game state")
-        return 
-    end
-    
-    local s = game.state
-    print("========== STATE DUMP ==========")
-    print(string.format("Seed: %s | RunState: %s", s.seed, s.runState))
-    local weaponDesc = "none"
-    if s.weapon then
-        local slainCount = s.weapon.slain and #s.weapon.slain or 0
-        weaponDesc = string.format("%d (slain: %d)", s.weapon.value, slainCount)
-    end
-    print(string.format("HP: %d/%d | Weapon: %s", s.hp, s.maxHp, weaponDesc))
-    print(string.format("Deck: %d | Discard: %d | AvoidBlocked: %s", 
-        #s.deck, #s.discard, tostring(s.turnFlags.lastTurnWasAvoid)))
-    
-    -- Room cards with full IDs (handles sparse array)
-    print("Room cards:")
-    for i = 1, State.ROOM_SIZE do
-        local card = s.room.cards[i]
-        if card then
-            print(string.format("  [%d] %s (id=%d, %s, value %d)", 
-                i, Cards.cardToString(card), card.id or 0, Cards.cardType(card), Cards.cardValue(card)))
-        else
-            print(string.format("  [%d] (empty)", i))
-        end
-    end
-    
-    -- Weapon target constraint
-    local lastSlain = s.turnFlags.lastMonsterSlain
-    if lastSlain then
-        print(string.format("Weapon can hit: <= %d", lastSlain))
-    else
-        print("Weapon can hit: any monster")
-    end
-    
-    -- Run duplicate assertion
-    local valid, err = State.assertNoDuplicateCards(s)
-    if valid then
-        print("Card integrity: OK (no duplicates)")
-    else
-        print("Card integrity: FAILED - " .. err)
-    end
-    
-    -- Total card count (should always equal 44)
-    local totalCards = #s.deck + #s.discard + State.roomCardCount(s)
-    if s.weapon then
-        totalCards = totalCards + 1
-        if s.weapon.slain then
-            totalCards = totalCards + #s.weapon.slain
-        end
-    end
-    print(string.format("Total cards accounted for: %d/44", totalCards))
-    
-    print("================================")
-end
-
--- L.5: Auto-play one step (take first available card)
-function autoPlayStep()
-    if not game.state then return end
-    
-    local s = game.state
-    
-    -- Check if game is over
-    if s.runState == State.RunState.GAME_OVER or 
-       s.runState == State.RunState.VICTORY then
-        print("Auto-play: Game ended")
-        return
-    end
-    
-    -- Check if room has cards (use roomCardCount for sparse array)
-    if State.roomCardCount(s) == 0 then
-        print("Auto-play: Room empty")
-        return
-    end
-    
-    -- Simple strategy: take first available card (handle sparse array)
-    for i = 1, State.ROOM_SIZE do
-        if s.room.cards[i] then
-            game.state = Actions.applyTake(game.state, i)
-            print(string.format("Auto-play: Took card %d", i))
+    if app.layout and app.layout.overlayLayout then
+        local hit = RunEndOverlay.hitTest(x, y, app.layout.overlayLayout)
+        if hit == "newRun" then
+            pushLog("New Run requested")
+            dispatch("onNewRun")
+            newRun()
             return
         end
     end
-end
 
--- Run a full automated game and check for duplicates
-function runAutomatedDuplicateTest(seed)
-    print("=== AUTOMATED DUPLICATE TEST (seed=" .. seed .. ") ===")
-    
-    Cards.resetCardCounter()
-    local testState = State.createNewGameState(seed)
-    testState = State.dealRoomUpToFull(testState)
-    testState.runState = State.RunState.AWAITING
-    
-    local moves = 0
-    local maxMoves = 200
-    local duplicateFound = false
-    
-    while moves < maxMoves do
-        -- Validate state
-        local valid, err = State.assertNoDuplicateCards(testState)
-        if not valid then
-            print("DUPLICATE FOUND at move " .. moves .. ": " .. err)
-            duplicateFound = true
-            break
+    if app.layout and app.layout.actionLayout then
+        local hit = ActionBar.hitTest(x, y, app.layout.actionLayout)
+        if hit == "avoid" then
+            if app.layout.actionLayout.avoid.enabled then
+                pushLog("Avoid Room")
+                app.game.state = Actions.applyAvoid(app.game.state)
+                app.game.state = syncGameLog(app.game.state)
+                dispatch("onAvoidRoom")
+                clearSelection()
+            else
+                local reason = app.layout.actionLayout.avoid.reason or "Avoid blocked"
+                pushLog("Avoid Room: blocked (" .. reason .. ")")
+                pushToast(reason)
+            end
+            return
         end
-        
-        -- Check for game end
-        if testState.runState == State.RunState.GAME_OVER or 
-           testState.runState == State.RunState.VICTORY then
-            break
-        end
-        
-        -- Take first available card
-        local taken = false
-        for i = 1, State.ROOM_SIZE do
-            if testState.room.cards[i] then
-                -- Randomly avoid or take
-                if not testState.turnFlags.lastTurnWasAvoid and math.random() < 0.1 then
-                    testState = Actions.applyAvoid(testState)
+    end
+
+    local index = ScreenMain.hitTestRoom(viewState, x, y)
+    if index then
+        local card = viewState.room.cards[index]
+        app.ui.selectedIndex = index
+        app.ui.focusedIndex = index
+        if card.type == "monster" then
+            if button == 2 then
+                resolveCard(viewState, "barehanded", { ok = true })
+            else
+                local Selectors = require("ui.selectors")
+                local canWeapon = Selectors.canWeaponFight(viewState, card)
+                if canWeapon.ok then
+                    resolveCard(viewState, "weapon", canWeapon)
                 else
-                    testState = Actions.applyTake(testState, i)
+                    resolveCard(viewState, "barehanded", { ok = true })
                 end
-                taken = true
-                break
+            end
+        elseif card.type == "potion" then
+            if button == 1 then
+                resolveCard(viewState, "potion")
+            end
+        elseif card.type == "weapon" then
+            if button == 1 then
+                resolveCard(viewState, "weapon")
             end
         end
-        
-        if not taken then break end
-        moves = moves + 1
+    else
+        clearSelection()
+        pushLog("Selection cleared")
     end
-    
-    if not duplicateFound then
-        print("PASSED: " .. moves .. " moves, ended with " .. testState.runState)
+end
+
+function love.keypressed(key)
+    local viewState = buildViewState(app.game.state, app.ui)
+    local handled = Keybindings.handle(viewState, key, {
+        onFocus = function(idx)
+            app.ui.focusedIndex = idx
+            local card = viewState.room.cards[idx]
+            pushLog("Focus " .. cardSummary(card))
+        end,
+        onSelect = function(idx)
+            app.ui.selectedIndex = idx
+            app.ui.focusedIndex = idx
+            local card = viewState.room.cards[idx]
+            pushLog("Selected " .. cardSummary(card))
+            dispatch("card_selected", { cardId = card.id })
+        end,
+        onClear = function()
+            clearSelection()
+            pushLog("Selection cleared")
+        end,
+        onAvoid = function(canAvoid)
+            if canAvoid.ok then
+                pushLog("Avoid Room")
+                app.game.state = Actions.applyAvoid(app.game.state)
+                app.game.state = syncGameLog(app.game.state)
+                dispatch("onAvoidRoom")
+                clearSelection()
+            else
+                local reason = canAvoid.reason or "Avoid blocked"
+                pushLog("Avoid Room: blocked (" .. reason .. ")")
+                pushToast(reason)
+            end
+        end,
+        onResolveMonster = function(mode, canWeapon)
+            resolveCard(viewState, mode, canWeapon)
+        end
+    })
+    if handled then return end
+
+    if key == "escape" then
+        love.event.quit()
+    elseif key == "m" then
+        app.ui.reducedMotion = not app.ui.reducedMotion
+        local label = app.ui.reducedMotion and "ON" or "OFF"
+        pushLog("Reduced motion: " .. label)
+        pushToast("Reduced motion " .. label)
+    elseif key == "h" then
+        app.ui.highContrast = not app.ui.highContrast
+        Theme.setHighContrast(app.ui.highContrast)
+        local label = app.ui.highContrast and "ON" or "OFF"
+        pushLog("High contrast: " .. label)
+        pushToast("High contrast " .. label)
     end
-    print("==============================================")
-    
-    return not duplicateFound
 end

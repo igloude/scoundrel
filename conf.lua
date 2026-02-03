@@ -8,7 +8,7 @@ function love.conf(t)
     t.window.width = 800
     t.window.height = 600
     t.window.vsync = 1  -- Enable vsync
-    t.window.resizable = false
+    t.window.resizable = true
     
     -- Version
     t.version = "11.4"  -- Love2D version
@@ -33,4 +33,3 @@ function love.conf(t)
     t.modules.video = false
     t.modules.window = true
 end
-
